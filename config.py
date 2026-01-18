@@ -1,10 +1,6 @@
 import os
-from dotenv import load_dotenv
 from dataclasses import dataclass
 from typing import Optional
-
-# Загрузить переменные из .env файла
-load_dotenv()
 
 @dataclass
 class Config:
