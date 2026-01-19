@@ -24,6 +24,12 @@ class Config:
     # ScrapeCreators (TikTok, Instagram, YouTube parsing)
     SCRAPECREATORS_API_KEY: str = os.getenv("SCRAPECREATORS_API_KEY", "")
     
+    # Google API (OAuth)
+    GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
+    GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    GOOGLE_SPREADSHEET_ID: str = os.getenv("GOOGLE_SPREADSHEET_ID", "")
+    GOOGLE_DRIVE_FOLDER_ID: str = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
+    
     # Callback URL для вебхуков (опционально)
     CALLBACK_BASE_URL: Optional[str] = os.getenv("CALLBACK_BASE_URL")
     
@@ -38,6 +44,7 @@ class Config:
             "heygen": bool(self.HEYGEN_API_KEY),
             "kieai": bool(self.KIEAI_API_KEY),
             "scrapecreators": bool(self.SCRAPECREATORS_API_KEY),
+            "google": bool(self.GOOGLE_CLIENT_ID and self.GOOGLE_CLIENT_SECRET),
         }
     
     def get_missing_keys(self) -> list[str]:

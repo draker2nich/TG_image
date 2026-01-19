@@ -6,6 +6,7 @@ from . import knowledge_base
 from . import viral_ideas
 from . import content_plan
 from . import carousel
+from . import google_auth
 
 __all__ = [
     "start", 
@@ -15,5 +16,6 @@ __all__ = [
     "knowledge_base",
     "viral_ideas",
     "content_plan",
-    "carousel"
+    "carousel",
+    "google_auth"
 ]

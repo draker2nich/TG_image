@@ -59,105 +59,64 @@ class TaskTracker:
     
     def _parse_veo_status(self, task: VideoTask, response: dict) -> tuple[str, Optional[str], Optional[str]]:
         """Парсит статус Veo3 задачи -> (status, video_url, error)"""
-        
-        # Логируем полный ответ для отладки
         logger.info(f"Veo3 task {task.task_id} raw response: {json.dumps(response, ensure_ascii=False, default=str)}")
         
         code = response.get("code")
         msg = response.get("msg", "")
         
-        # Код не 200 - проверяем тип ошибки
         if code != 200:
-            # 422 с "record is null" - задача ещё не зарегистрирована/в очереди
             if code == 422:
                 if "record is null" in str(msg).lower():
-                    logger.info(f"Task {task.task_id} still in queue (record is null)")
                     return "pending", None, None
                 if "record status is not success" in str(msg).lower():
-                    logger.info(f"Task {task.task_id} still processing")
                     return "pending", None, None
-            
-            # Другие ошибки - но не сразу фейлим
-            logger.warning(f"Task {task.task_id} non-200 code: {code}, msg: {msg}")
-            # Даём задаче шанс - возможно временная ошибка
             return "pending", None, None
         
         data = response.get("data", {})
-        
         if not data:
-            logger.info(f"Task {task.task_id} - empty data, still pending")
             return "pending", None, None
         
-        # Veo3 использует successFlag для определения статуса
         success_flag = data.get("successFlag")
-        logger.info(f"Task {task.task_id} successFlag: {success_flag}")
         
         if success_flag == 1:
-            # Успех - ищем URL
             video_url = None
-            
-            # Формат Veo3: data.response.resultUrls
             resp_data = data.get("response", {})
             if isinstance(resp_data, dict):
                 result_urls = resp_data.get("resultUrls", [])
                 if result_urls:
                     video_url = result_urls[0]
-                    logger.info(f"Task {task.task_id} found URL in response.resultUrls: {video_url}")
             
-            # Альтернативный формат
             if not video_url:
                 result_urls = data.get("resultUrls", [])
                 if result_urls:
                     video_url = result_urls[0]
-                    logger.info(f"Task {task.task_id} found URL in resultUrls: {video_url}")
             
             if video_url:
                 return "completed", video_url, None
-            else:
-                logger.warning(f"Task {task.task_id} successFlag=1 but no URL found")
-                return "pending", None, None
+            return "pending", None, None
         
         elif success_flag == 0:
-            # Явная ошибка от API
             error_msg = data.get("errorMessage") or data.get("errorCode")
             if error_msg:
-                logger.error(f"Task {task.task_id} failed with error: {error_msg}")
                 return "failed", None, str(error_msg)
-            else:
-                # successFlag=0 но нет сообщения об ошибке - возможно ещё обрабатывается
-                logger.info(f"Task {task.task_id} successFlag=0 but no error message, treating as pending")
-                return "pending", None, None
-        
-        else:
-            # successFlag is None или другое значение - ещё в процессе
-            logger.info(f"Task {task.task_id} still processing (successFlag={success_flag})")
             return "pending", None, None
+        
+        return "pending", None, None
     
     def _parse_sora_status(self, task: VideoTask, response: dict) -> tuple[str, Optional[str], Optional[str]]:
         """Парсит статус Sora2 задачи -> (status, video_url, error)"""
-        
         logger.info(f"Sora task {task.task_id} raw response: {json.dumps(response, ensure_ascii=False, default=str)}")
         
         code = response.get("code")
         if code != 200:
-            error_msg = response.get("msg") or response.get("message")
-            logger.warning(f"Sora task {task.task_id} non-200: {code}, {error_msg}")
             return "pending", None, None
         
         data = response.get("data", {})
-        
-        state = data.get("state", "").lower()
-        if not state:
-            state = data.get("status", "").lower()
-        if not state:
-            state = data.get("taskStatus", "").lower()
-        
-        logger.info(f"Sora task {task.task_id} state: {state}")
+        state = data.get("state", "").lower() or data.get("status", "").lower() or data.get("taskStatus", "").lower()
         
         if state in ("success", "completed", "done"):
             video_url = None
             
-            # Формат 1: resultJson как строка JSON
             result_json_str = data.get("resultJson")
             if result_json_str and isinstance(result_json_str, str):
                 try:
@@ -168,7 +127,6 @@ class TaskTracker:
                 except json.JSONDecodeError:
                     pass
             
-            # Формат 2: resultJson как объект
             if not video_url:
                 result_json = data.get("resultJson", {})
                 if isinstance(result_json, dict):
@@ -176,20 +134,16 @@ class TaskTracker:
                     if urls:
                         video_url = urls[0]
             
-            # Формат 3: videoInfo.videoUrl
             if not video_url:
                 video_info = data.get("videoInfo", {})
                 video_url = video_info.get("videoUrl")
             
-            # Формат 4: прямые поля
             if not video_url:
                 video_url = data.get("videoUrl") or data.get("video_url") or data.get("url")
             
             if video_url:
                 return "completed", video_url, None
-            else:
-                logger.warning(f"Sora task {task.task_id} success but no URL")
-                return "pending", None, None
+            return "pending", None, None
         
         elif state in ("failed", "fail", "error"):
             error = data.get("failMsg") or data.get("errorMessage") or data.get("error") or "Generation failed"
@@ -211,7 +165,6 @@ class TaskTracker:
     
     def _parse_status(self, task: VideoTask, response: dict) -> tuple[str, Optional[str], Optional[str]]:
         """Парсит статус из ответа API -> (status, video_url, error)"""
-        
         if task.model == "heygen":
             return self._parse_heygen_status(task, response)
         elif task.model in ("veo3", "veo3_fast"):
@@ -232,7 +185,6 @@ class TaskTracker:
                 logger.info(f"Polling {len(tasks_to_check)} tasks...")
                 
                 for task in tasks_to_check:
-                    # Таймаут 30 минут
                     if datetime.now() - task.created_at > timedelta(minutes=30):
                         await self._notify_timeout(task)
                         self.remove_task(task.task_id)
@@ -249,13 +201,53 @@ class TaskTracker:
                     elif status == "failed" and error:
                         await self._notify_failure(task, error)
                         self.remove_task(task.task_id)
-                    # else: pending - продолжаем ждать
                     
                     await asyncio.sleep(3)
                     
             except Exception as e:
                 logger.error(f"Polling error: {e}", exc_info=True)
                 await asyncio.sleep(10)
+    
+    async def _upload_to_google(self, task: VideoTask, video_url: str) -> Optional[str]:
+        """Загружает видео на Google Drive"""
+        from services.google_service import google_service
+        
+        try:
+            if not await google_service.load_token():
+                return None
+            
+            model_names = {
+                "sora2": "Sora2",
+                "veo3": "Veo3",
+                "veo3_fast": "Veo3_Fast",
+                "heygen": "HeyGen"
+            }
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_name = f"{model_names.get(task.model, 'Video')}_{timestamp}.mp4"
+            
+            result = await google_service.upload_from_url(
+                url=video_url,
+                file_name=file_name,
+                mime_type="video/mp4"
+            )
+            
+            if result.success:
+                # Логируем в таблицу
+                await google_service.log_content(
+                    content_type="short_video",
+                    title=task.prompt[:100] if task.prompt else file_name,
+                    status="uploaded",
+                    file_url=result.file_url or "",
+                    platform=task.model,
+                    notes=f"Task ID: {task.task_id}"
+                )
+                return result.file_url
+            
+            return None
+        except Exception as e:
+            logger.error(f"Failed to upload to Google: {e}")
+            return None
     
     async def _notify_success(self, task: VideoTask, video_url: str):
         """Уведомление об успешной генерации"""
@@ -270,6 +262,12 @@ class TaskTracker:
                 "heygen": "HeyGen"
             }
             
+            # Пробуем загрузить на Google Drive
+            google_url = await self._upload_to_google(task, video_url)
+            google_info = ""
+            if google_url:
+                google_info = f"\n\n☁️ <a href='{google_url}'>Открыть на Google Drive</a>"
+            
             try:
                 await self._bot.send_video(
                     chat_id=task.chat_id,
@@ -278,6 +276,7 @@ class TaskTracker:
                         f"✅ <b>Видео готово!</b>\n\n"
                         f"🎬 Модель: {model_names.get(task.model, task.model)}\n"
                         f"🆔 Task ID: <code>{task.task_id}</code>"
+                        f"{google_info}"
                     ),
                     parse_mode="HTML"
                 )
@@ -288,8 +287,9 @@ class TaskTracker:
                     text=(
                         f"✅ <b>Видео готово!</b>\n\n"
                         f"🎬 Модель: {model_names.get(task.model, task.model)}\n"
-                        f"🔗 <a href='{video_url}'>Скачать видео</a>\n\n"
+                        f"🔗 <a href='{video_url}'>Скачать видео</a>\n"
                         f"🆔 Task ID: <code>{task.task_id}</code>"
+                        f"{google_info}"
                     ),
                     parse_mode="HTML"
                 )
@@ -305,6 +305,17 @@ class TaskTracker:
             return
         
         try:
+            # Логируем ошибку в таблицу
+            from services.google_service import google_service
+            if await google_service.load_token():
+                await google_service.log_content(
+                    content_type="short_video",
+                    title=task.prompt[:100] if task.prompt else f"Video {task.task_id}",
+                    status="error",
+                    platform=task.model,
+                    notes=error or "Unknown error"
+                )
+            
             await self._bot.send_message(
                 chat_id=task.chat_id,
                 text=(

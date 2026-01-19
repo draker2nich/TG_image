@@ -10,6 +10,7 @@ from handlers import (
     start, avatar_video, seo_article, short_video, 
     knowledge_base, viral_ideas, content_plan, carousel
 )
+from handlers import google_auth
 from services.task_tracker import task_tracker
 
 # Логирование
@@ -51,6 +52,7 @@ async def main():
     dp.include_router(viral_ideas.router)
     dp.include_router(content_plan.router)
     dp.include_router(carousel.router)
+    dp.include_router(google_auth.router)
     
     # Удаление вебхука и запуск polling
     await bot.delete_webhook(drop_pending_updates=True)

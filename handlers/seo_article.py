@@ -1,3 +1,4 @@
+from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
@@ -7,6 +8,44 @@ from keyboards.menus import cancel_kb, confirm_edit_kb, back_to_menu_kb
 from services.openai_service import openai_service
 
 router = Router()
+
+async def upload_article_to_google(article: str, topic: str, seo_title: str = "") -> tuple[bool, str]:
+    """Загружает статью на Google Drive и логирует"""
+    from services.google_service import google_service
+    
+    try:
+        if not await google_service.load_token():
+            return False, ""
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_name = f"SEO_{topic[:30].replace(' ', '_')}_{timestamp}.md"
+        
+        # Добавляем заголовок
+        content = article
+        if seo_title and not article.startswith(f"# {seo_title}"):
+            content = f"# {seo_title}\n\n{article}"
+        
+        result = await google_service.upload_file_to_drive(
+            file_content=content.encode("utf-8"),
+            file_name=file_name,
+            mime_type="text/markdown"
+        )
+        
+        if result.success:
+            await google_service.log_content(
+                content_type="seo_article",
+                title=seo_title or topic,
+                status="uploaded",
+                file_url=result.file_url or "",
+                platform="blog",
+                notes=f"Keywords: {topic}"
+            )
+            return True, result.file_url or ""
+        
+        return False, ""
+    except Exception as e:
+        print(f"Error uploading article: {e}")
+        return False, ""
 
 @router.callback_query(F.data == "menu:seo")
 async def start_seo_flow(callback: CallbackQuery, state: FSMContext):
@@ -38,7 +77,6 @@ async def process_seo_topic(message: Message, state: FSMContext):
     await message.answer("⏳ Анализирую тему и подбираю SEO-ключи...")
     
     try:
-        # Генерируем ключи и заголовок через новый метод
         seo_data = await openai_service.generate_seo_keywords(topic)
         
         keywords_str = seo_data.get("keywords", "")
@@ -63,13 +101,11 @@ async def process_seo_topic(message: Message, state: FSMContext):
             reply_markup=confirm_edit_kb()
         )
     except Exception as e:
-        # Fallback - просим ввести ключи вручную
         await state.set_state(SEOArticleStates.waiting_keywords)
         await message.answer(
             f"⚠️ Не удалось автоматически подобрать ключи: {e}\n\n"
             "🔑 Введите ключевые слова через запятую.\n\n"
-            "💡 Пример: <i>CRM, автоматизация, малый бизнес, продажи</i>\n\n"
-            "Или отправьте <b>-</b> чтобы пропустить.",
+            "💡 Пример: <i>CRM, автоматизация, малый бизнес, продажи</i>",
             parse_mode="HTML",
             reply_markup=cancel_kb()
         )
@@ -91,8 +127,7 @@ async def confirm_keywords(callback: CallbackQuery, state: FSMContext):
         await state.set_state(SEOArticleStates.waiting_outline_confirm)
         
         await callback.message.edit_text(
-            f"📋 <b>Структура статьи:</b>\n\n{outline}\n\n"
-            "Выберите действие:",
+            f"📋 <b>Структура статьи:</b>\n\n{outline}\n\nВыберите действие:",
             parse_mode="HTML",
             reply_markup=confirm_edit_kb()
         )
@@ -106,12 +141,10 @@ async def edit_keywords(callback: CallbackQuery, state: FSMContext):
     """Редактирование ключей вручную"""
     await callback.message.edit_text(
         "🔑 Введите ключевые слова через запятую.\n\n"
-        "💡 Пример: <i>CRM, автоматизация, малый бизнес, продажи</i>\n\n"
-        "Или отправьте <b>-</b> чтобы пропустить.",
+        "💡 Пример: <i>CRM, автоматизация, малый бизнес, продажи</i>",
         parse_mode="HTML",
         reply_markup=cancel_kb()
     )
-    # Убираем seo_title чтобы не использовать старый
     await state.update_data(manual_input=True, seo_title=None)
     await callback.answer()
 
@@ -130,18 +163,13 @@ async def regenerate_keywords(callback: CallbackQuery, state: FSMContext):
         keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
         seo_title = seo_data.get("seo_title", "")
         
-        await state.update_data(
-            keywords=keywords,
-            keywords_str=keywords_str,
-            seo_title=seo_title
-        )
+        await state.update_data(keywords=keywords, keywords_str=keywords_str, seo_title=seo_title)
         
         await callback.message.edit_text(
             f"🔍 <b>Новый SEO-анализ:</b>\n\n"
             f"📌 <b>Тема:</b> {topic}\n\n"
             f"🔑 <b>Ключевые слова:</b>\n<i>{keywords_str}</i>\n\n"
-            f"📰 <b>SEO-заголовок:</b>\n<i>{seo_title}</i>\n\n"
-            f"Хотите использовать эти ключи или ввести свои?",
+            f"📰 <b>SEO-заголовок:</b>\n<i>{seo_title}</i>",
             parse_mode="HTML",
             reply_markup=confirm_edit_kb()
         )
@@ -163,17 +191,12 @@ async def process_manual_keywords(message: Message, state: FSMContext):
     await message.answer("⏳ Генерирую структуру статьи...")
     
     try:
-        outline = await openai_service.generate_seo_outline(
-            topic, 
-            keywords,
-            data.get("seo_title")
-        )
+        outline = await openai_service.generate_seo_outline(topic, keywords, data.get("seo_title"))
         await state.update_data(outline=outline)
         await state.set_state(SEOArticleStates.waiting_outline_confirm)
         
         await message.answer(
-            f"📋 <b>Структура статьи:</b>\n\n{outline}\n\n"
-            "Выберите действие:",
+            f"📋 <b>Структура статьи:</b>\n\n{outline}\n\nВыберите действие:",
             parse_mode="HTML",
             reply_markup=confirm_edit_kb()
         )
@@ -189,15 +212,11 @@ async def confirm_outline(callback: CallbackQuery, state: FSMContext):
     
     try:
         article = await openai_service.generate_seo_article(
-            data["topic"], 
-            data.get("keywords", []), 
-            data["outline"],
-            data.get("seo_title")
+            data["topic"], data.get("keywords", []), data["outline"], data.get("seo_title")
         )
         await state.update_data(article=article)
         await state.set_state(SEOArticleStates.waiting_article_confirm)
         
-        # Разбиваем длинную статью на части
         if len(article) > 3500:
             parts = [article[i:i+3500] for i in range(0, len(article), 3500)]
             for i, part in enumerate(parts[:-1]):
@@ -226,9 +245,7 @@ async def regenerate_outline(callback: CallbackQuery, state: FSMContext):
     
     try:
         outline = await openai_service.generate_seo_outline(
-            data["topic"], 
-            data.get("keywords", []),
-            data.get("seo_title")
+            data["topic"], data.get("keywords", []), data.get("seo_title")
         )
         await state.update_data(outline=outline)
         
@@ -248,10 +265,7 @@ async def edit_outline(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SEOArticleStates.waiting_edit)
     await state.update_data(editing="outline")
     
-    await callback.message.edit_text(
-        "✏️ Отправьте отредактированную структуру статьи:",
-        reply_markup=cancel_kb()
-    )
+    await callback.message.edit_text("✏️ Отправьте отредактированную структуру:", reply_markup=cancel_kb())
     await callback.answer()
 
 @router.message(SEOArticleStates.waiting_edit)
@@ -271,13 +285,12 @@ async def process_edit(message: Message, state: FSMContext):
 
 @router.callback_query(SEOArticleStates.waiting_article_confirm, F.data == "confirm")
 async def finish_article(callback: CallbackQuery, state: FSMContext):
-    """Завершение — отправка статьи файлом"""
+    """Завершение — отправка статьи файлом и загрузка на Google Drive"""
     data = await state.get_data()
     article = data["article"]
     topic = data["topic"][:30]
     seo_title = data.get("seo_title", "")
     
-    # Добавляем SEO-заголовок в начало статьи если есть
     if seo_title and not article.startswith(f"# {seo_title}"):
         article = f"# {seo_title}\n\n{article}"
     
@@ -289,12 +302,22 @@ async def finish_article(callback: CallbackQuery, state: FSMContext):
     
     await callback.message.answer_document(
         file,
-        caption=f"✅ Статья сохранена!\n\n📰 <b>Заголовок:</b> {seo_title}" if seo_title else "✅ Статья сохранена!",
+        caption=f"✅ Статья сохранена!\n📰 <b>Заголовок:</b> {seo_title}" if seo_title else "✅ Статья сохранена!",
         parse_mode="HTML"
     )
+    
+    # Загружаем на Google Drive
+    success, google_url = await upload_article_to_google(article, data["topic"], seo_title)
+    
+    google_info = ""
+    if success and google_url:
+        google_info = f"\n\n☁️ <a href='{google_url}'>Открыть на Google Drive</a>"
+    
     await callback.message.edit_text(
-        "✅ Статья готова и отправлена файлом!",
-        reply_markup=back_to_menu_kb()
+        f"✅ Статья готова и отправлена файлом!{google_info}",
+        parse_mode="HTML",
+        reply_markup=back_to_menu_kb(),
+        disable_web_page_preview=True
     )
     await state.clear()
     await callback.answer()
@@ -308,10 +331,7 @@ async def regenerate_article(callback: CallbackQuery, state: FSMContext):
     
     try:
         article = await openai_service.generate_seo_article(
-            data["topic"], 
-            data.get("keywords", []), 
-            data["outline"],
-            data.get("seo_title")
+            data["topic"], data.get("keywords", []), data["outline"], data.get("seo_title")
         )
         await state.update_data(article=article)
         
@@ -337,9 +357,7 @@ async def edit_article(callback: CallbackQuery, state: FSMContext):
     """Редактирование статьи"""
     await callback.message.edit_text(
         "✏️ Редактирование длинных статей через бот неудобно.\n\n"
-        "Рекомендую:\n"
-        "1. Скачать статью (нажмите 'Подтвердить')\n"
-        "2. Отредактировать в текстовом редакторе\n\n"
+        "Рекомендую:\n1. Скачать статью (нажмите 'Подтвердить')\n2. Отредактировать в текстовом редакторе\n\n"
         "Или нажмите 'Сгенерировать заново' для новой версии.",
         reply_markup=confirm_edit_kb()
     )
