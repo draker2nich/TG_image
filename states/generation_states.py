@@ -2,33 +2,51 @@ from aiogram.fsm.state import State, StatesGroup
 
 class AvatarVideoStates(StatesGroup):
     """Состояния для генерации видео с аватаром HeyGen"""
-    waiting_topic = State()           # Ожидание темы/описания
-    waiting_script_confirm = State()  # Подтверждение/редактирование сценария
-    waiting_script_edit = State()     # Ввод отредактированного сценария
-    selecting_avatar = State()        # Выбор аватара
-    selecting_voice = State()         # Выбор голоса
-    confirming_generation = State()   # Финальное подтверждение
-    generating = State()              # Процесс генерации
+    waiting_topic = State()
+    waiting_script_confirm = State()
+    waiting_script_edit = State()
+    selecting_avatar = State()
+    selecting_voice = State()
+    confirming_generation = State()
+    generating = State()
 
 class SEOArticleStates(StatesGroup):
     """Состояния для генерации SEO-статей"""
-    waiting_topic = State()           # Ожидание темы статьи
-    waiting_keywords = State()        # Ожидание ключевых слов
-    waiting_outline_confirm = State() # Подтверждение структуры
-    waiting_article_confirm = State() # Подтверждение статьи
-    waiting_edit = State()            # Редактирование
+    waiting_topic = State()
+    waiting_keywords = State()
+    waiting_outline_confirm = State()
+    waiting_article_confirm = State()
+    waiting_edit = State()
 
 class ShortVideoStates(StatesGroup):
     """Состояния для генерации коротких видео Sora2/Veo3"""
-    selecting_model = State()         # Выбор модели
-    selecting_mode = State()          # Text-to-Video или Image-to-Video
-    waiting_prompt = State()          # Ожидание промпта
-    waiting_image = State()           # Ожидание изображения (для I2V)
-    selecting_aspect = State()        # Выбор соотношения сторон
-    confirming_generation = State()   # Подтверждение
-    generating = State()              # Процесс генерации
+    selecting_model = State()
+    selecting_mode = State()
+    waiting_prompt = State()
+    waiting_image = State()
+    selecting_aspect = State()
+    confirming_generation = State()
+    generating = State()
 
 class KnowledgeBaseStates(StatesGroup):
     """Состояния для управления базой знаний"""
-    waiting_file = State()            # Ожидание файла
-    confirming_delete = State()       # Подтверждение удаления
+    waiting_file = State()
+    confirming_delete = State()
+
+class ViralParserStates(StatesGroup):
+    """Состояния для парсинга вирусного контента"""
+    selecting_platform = State()
+    entering_handle = State()
+    selecting_sort = State()
+    viewing_results = State()
+    viewing_transcript = State()
+
+class ContentPlanStates(StatesGroup):
+    """Состояния для генерации контент-плана"""
+    entering_niche = State()
+    selecting_period = State()
+    selecting_platforms = State()
+    selecting_frequency = State()
+    generating = State()
+    viewing_plan = State()
+    selecting_idea = State()

@@ -1,6 +1,8 @@
 import os
 from dataclasses import dataclass
 from typing import Optional
+from dotenv import load_dotenv
+load_dotenv()
 
 @dataclass
 class Config:
@@ -19,6 +21,9 @@ class Config:
     KIEAI_API_KEY: str = os.getenv("KIEAI_API_KEY", "")
     KIEAI_BASE_URL: str = "https://api.kie.ai"
     
+    # ScrapeCreators (TikTok, Instagram, YouTube parsing)
+    SCRAPECREATORS_API_KEY: str = os.getenv("SCRAPECREATORS_API_KEY", "")
+    
     # Callback URL для вебхуков (опционально)
     CALLBACK_BASE_URL: Optional[str] = os.getenv("CALLBACK_BASE_URL")
     
@@ -32,6 +37,7 @@ class Config:
             "openai": bool(self.OPENAI_API_KEY),
             "heygen": bool(self.HEYGEN_API_KEY),
             "kieai": bool(self.KIEAI_API_KEY),
+            "scrapecreators": bool(self.SCRAPECREATORS_API_KEY),
         }
     
     def get_missing_keys(self) -> list[str]:
