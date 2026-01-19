@@ -50,3 +50,14 @@ class ContentPlanStates(StatesGroup):
     generating = State()
     viewing_plan = State()
     selecting_idea = State()
+
+class CarouselStates(StatesGroup):
+    """Состояния для генерации каруселей"""
+    entering_topic = State()
+    selecting_slides_count = State()
+    selecting_style = State()
+    selecting_color = State()
+    reviewing_content = State()
+    editing_slide = State()
+    generating = State()
+    viewing_result = State()

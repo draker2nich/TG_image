@@ -8,7 +8,7 @@ from aiogram.enums import ParseMode
 from config import config
 from handlers import (
     start, avatar_video, seo_article, short_video, 
-    knowledge_base, viral_ideas, content_plan
+    knowledge_base, viral_ideas, content_plan, carousel
 )
 from services.task_tracker import task_tracker
 
@@ -50,6 +50,7 @@ async def main():
     dp.include_router(knowledge_base.router)
     dp.include_router(viral_ideas.router)
     dp.include_router(content_plan.router)
+    dp.include_router(carousel.router)
     
     # Удаление вебхука и запуск polling
     await bot.delete_webhook(drop_pending_updates=True)

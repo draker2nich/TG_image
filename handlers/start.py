@@ -25,6 +25,7 @@ async def cmd_start(message: Message, state: FSMContext):
         f"• 🎭 Видео с аватаром (HeyGen)\n"
         f"• 📝 SEO-статьи (ChatGPT)\n"
         f"• 🎬 Короткие видео (Sora 2 / Veo 3)\n"
+        f"• 🖼 Карусели изображений (Nano Banana Pro)\n"
         f"• 🔥 Парсинг вирусного контента\n"
         f"• 📅 Генерация контент-плана{warning}",
         reply_markup=main_menu_kb()
@@ -92,6 +93,7 @@ async def cmd_help(message: Message):
         "🎭 <b>Видео с аватаром</b> — создание видео с AI-аватаром HeyGen\n\n"
         "📝 <b>SEO-статьи</b> — генерация оптимизированных статей\n\n"
         "🎬 <b>Короткие видео</b> — генерация через Sora 2 / Veo 3.1\n\n"
+        "🖼 <b>Карусели</b> — генерация каруселей изображений для Telegram/Instagram\n\n"
         "🔥 <b>Вирусный контент</b> — парсинг TikTok, Instagram, YouTube\n\n"
         "📅 <b>Контент-план</b> — генерация плана на основе анализа\n\n"
         "📚 <b>База знаний</b> — файлы для персонализации контента",

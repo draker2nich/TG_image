@@ -9,7 +9,8 @@ def main_menu_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📝 SEO-статья", callback_data="menu:seo")
     )
     builder.row(
-        InlineKeyboardButton(text="🎬 Короткое видео", callback_data="menu:short_video")
+        InlineKeyboardButton(text="🎬 Короткое видео", callback_data="menu:short_video"),
+        InlineKeyboardButton(text="🖼 Карусель", callback_data="menu:carousel")
     )
     builder.row(
         InlineKeyboardButton(text="🔥 Вирусный контент", callback_data="menu:viral"),
