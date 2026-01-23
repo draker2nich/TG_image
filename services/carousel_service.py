@@ -215,10 +215,13 @@ Important requirements:
     
     async def wait_for_image(self, task_id: str, timeout: int = 300, poll_interval: int = 10) -> Optional[str]:
         """Ожидает завершения генерации 4o Image"""
+        import logging
+        logger = logging.getLogger(__name__)
         elapsed = 0
         
         while elapsed < timeout:
             result = await kieai_service.get_4o_image_status(task_id)
+            logger.info(f"4o Image status for {task_id}: {result}")
             
             if result.get("code") != 200:
                 await asyncio.sleep(poll_interval)
@@ -230,33 +233,48 @@ Important requirements:
             
             # successFlag: 0 = generating, 1 = success, 2 = failed
             if success_flag == 1:
-                # Успешно завершено
-                response = data.get("response", {})
-                if isinstance(response, dict):
-                    urls = response.get("result_urls", [])
+                # Успешно завершено - по документации kie.ai
+                response = data.get("response")
+                
+                # response может быть dict или None
+                if response and isinstance(response, dict):
+                    # Пробуем оба варианта написания
+                    urls = response.get("result_urls") or response.get("resultUrls") or []
                     if urls:
+                        logger.info(f"4o Image completed: {urls[0]}")
                         return urls[0]
                 
-                # Альтернативный путь для resultUrls
-                result_urls = data.get("resultUrls", [])
-                if result_urls:
-                    return result_urls[0]
+                # Fallback - проверяем другие поля
+                for key in ["resultUrls", "result_urls", "imageUrl", "url"]:
+                    val = data.get(key)
+                    if val:
+                        if isinstance(val, list) and val:
+                            logger.info(f"4o Image completed (fallback {key}): {val[0]}")
+                            return val[0]
+                        elif isinstance(val, str):
+                            logger.info(f"4o Image completed (fallback {key}): {val}")
+                            return val
                 
+                logger.warning(f"4o Image success but no URL found in: {data}")
                 return None
             
             elif success_flag == 2:
-                # Ошибка генерации
                 error_msg = data.get("errorMessage", "Unknown error")
-                print(f"4o Image generation failed: {error_msg}")
+                logger.error(f"4o Image generation failed: {error_msg}")
                 return None
             
             # success_flag == 0, ещё генерируется
             progress = data.get("progress", "0.00")
-            print(f"4o Image progress: {float(progress) * 100:.1f}%")
+            try:
+                pct = float(progress) * 100
+            except:
+                pct = 0
+            logger.info(f"4o Image progress: {pct:.1f}%")
             
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
         
+        logger.warning(f"4o Image timeout for {task_id}")
         return None
-
+    
 carousel_service = CarouselService()
