@@ -12,7 +12,7 @@ class VideoTask:
     task_id: str
     chat_id: int
     user_id: int
-    model: Literal["sora2", "veo3", "veo3_fast", "heygen"]
+    model: Literal["sora2", "veo3", "veo3_fast", "kling_avatar", "nano_banana"]
     created_at: datetime
     prompt: str = ""
     status: str = "pending"
@@ -44,11 +44,12 @@ class TaskTracker:
     async def check_task_status(self, task: VideoTask) -> dict:
         """Проверяет статус конкретной задачи"""
         from services.kieai_service import kieai_service
-        from services.heygen_service import heygen_service
+        from services.kling_avatar_service import kling_avatar_service
         
         try:
-            if task.model == "heygen":
-                return await heygen_service.get_video_status(task.task_id)
+            if task.model in ("kling_avatar", "nano_banana"):
+                # Используем общий endpoint для Kling и Nano Banana
+                return await kling_avatar_service.get_task_status(task.task_id)
             elif task.model in ("veo3", "veo3_fast"):
                 return await kieai_service.get_veo_status(task.task_id)
             else:  # sora2
@@ -56,6 +57,52 @@ class TaskTracker:
         except Exception as e:
             logger.error(f"Error checking task {task.task_id}: {e}")
             return {"error": str(e)}
+    
+    def _parse_kling_status(self, task: VideoTask, response: dict) -> tuple[str, Optional[str], Optional[str]]:
+        """Парсит статус Kling/Nano Banana задачи -> (status, video_url, error)"""
+        logger.info(f"Kling task {task.task_id} raw response: {json.dumps(response, ensure_ascii=False, default=str)}")
+        
+        code = response.get("code")
+        if code != 200:
+            return "pending", None, None
+        
+        data = response.get("data", {})
+        state = data.get("state", "").lower()
+        
+        if state in ("success", "completed", "done"):
+            result_url = None
+            
+            # Парсим resultJson
+            result_json_str = data.get("resultJson")
+            if result_json_str and isinstance(result_json_str, str):
+                try:
+                    result_data = json.loads(result_json_str)
+                    urls = result_data.get("resultUrls", [])
+                    if urls:
+                        result_url = urls[0]
+                except json.JSONDecodeError:
+                    pass
+            
+            # Альтернативные поля
+            if not result_url:
+                result_json = data.get("resultJson", {})
+                if isinstance(result_json, dict):
+                    urls = result_json.get("resultUrls", [])
+                    if urls:
+                        result_url = urls[0]
+            
+            if not result_url:
+                result_url = data.get("videoUrl") or data.get("imageUrl") or data.get("url")
+            
+            if result_url:
+                return "completed", result_url, None
+            return "pending", None, None
+        
+        elif state in ("failed", "fail", "error"):
+            error = data.get("failMsg") or data.get("errorMessage") or "Generation failed"
+            return "failed", None, error
+        
+        return "pending", None, None
     
     def _parse_veo_status(self, task: VideoTask, response: dict) -> tuple[str, Optional[str], Optional[str]]:
         """Парсит статус Veo3 задачи -> (status, video_url, error)"""
@@ -151,22 +198,10 @@ class TaskTracker:
         
         return "pending", None, None
     
-    def _parse_heygen_status(self, task: VideoTask, response: dict) -> tuple[str, Optional[str], Optional[str]]:
-        """Парсит статус HeyGen задачи"""
-        data = response.get("data", {})
-        status = data.get("status", "unknown")
-        
-        if status == "completed":
-            return "completed", data.get("video_url"), None
-        elif status == "failed":
-            return "failed", None, data.get("error", "Generation failed")
-        
-        return "pending", None, None
-    
     def _parse_status(self, task: VideoTask, response: dict) -> tuple[str, Optional[str], Optional[str]]:
         """Парсит статус из ответа API -> (status, video_url, error)"""
-        if task.model == "heygen":
-            return self._parse_heygen_status(task, response)
+        if task.model in ("kling_avatar", "nano_banana"):
+            return self._parse_kling_status(task, response)
         elif task.model in ("veo3", "veo3_fast"):
             return self._parse_veo_status(task, response)
         else:
@@ -185,7 +220,10 @@ class TaskTracker:
                 logger.info(f"Polling {len(tasks_to_check)} tasks...")
                 
                 for task in tasks_to_check:
-                    if datetime.now() - task.created_at > timedelta(minutes=30):
+                    # Увеличенный таймаут для Kling (до 45 минут)
+                    timeout_minutes = 45 if task.model == "kling_avatar" else 30
+                    
+                    if datetime.now() - task.created_at > timedelta(minutes=timeout_minutes):
                         await self._notify_timeout(task)
                         self.remove_task(task.task_id)
                         continue
@@ -220,7 +258,8 @@ class TaskTracker:
                 "sora2": "Sora2",
                 "veo3": "Veo3",
                 "veo3_fast": "Veo3_Fast",
-                "heygen": "HeyGen"
+                "kling_avatar": "Kling_Avatar",
+                "nano_banana": "NanoBanana"
             }
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -233,9 +272,9 @@ class TaskTracker:
             )
             
             if result.success:
-                # Логируем в таблицу
+                content_type = "video_avatar" if task.model == "kling_avatar" else "short_video"
                 await google_service.log_content(
-                    content_type="short_video",
+                    content_type=content_type,
                     title=task.prompt[:100] if task.prompt else file_name,
                     status="uploaded",
                     file_url=result.file_url or "",
@@ -259,7 +298,8 @@ class TaskTracker:
                 "sora2": "Sora 2",
                 "veo3": "Veo 3.1 Quality", 
                 "veo3_fast": "Veo 3.1 Fast",
-                "heygen": "HeyGen"
+                "kling_avatar": "Kling AI Avatar",
+                "nano_banana": "Nano Banana Pro"
             }
             
             # Пробуем загрузить на Google Drive
@@ -305,11 +345,11 @@ class TaskTracker:
             return
         
         try:
-            # Логируем ошибку в таблицу
             from services.google_service import google_service
             if await google_service.load_token():
+                content_type = "video_avatar" if task.model == "kling_avatar" else "short_video"
                 await google_service.log_content(
-                    content_type="short_video",
+                    content_type=content_type,
                     title=task.prompt[:100] if task.prompt else f"Video {task.task_id}",
                     status="error",
                     platform=task.model,
@@ -322,7 +362,7 @@ class TaskTracker:
                     f"❌ <b>Ошибка генерации видео</b>\n\n"
                     f"🆔 Task ID: <code>{task.task_id}</code>\n"
                     f"⚠️ {error or 'Неизвестная ошибка'}\n\n"
-                    f"Попробуйте ещё раз с другим промптом."
+                    f"Попробуйте ещё раз."
                 ),
                 parse_mode="HTML"
             )

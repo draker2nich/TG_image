@@ -3,13 +3,11 @@ from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-import json
 
 from states.generation_states import ContentPlanStates
 from keyboards.menus import cancel_kb, back_to_menu_kb, confirm_edit_kb
 from services.content_plan_service import content_plan_service, ContentIdea
 from services.openai_service import openai_service
-from services.viral_parser import ViralVideo
 
 router = Router()
 
@@ -77,9 +75,23 @@ async def start_content_plan_flow(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     
+    # Проверяем наличие данных
+    kb_files = openai_service._load_files_from_dir(openai_service._load_knowledge_base and "knowledge_base" or "")
+    comp_content = openai_service._load_competitors_content()
+    
+    info_text = ""
+    if comp_content:
+        info_text = "\n\n✅ Загружен контент конкурентов — будет использован для анализа."
+    else:
+        info_text = "\n\n💡 Совет: загрузите контент конкурентов в базу знаний для лучших результатов."
+    
     await state.set_state(ContentPlanStates.entering_niche)
     await callback.message.edit_text(
         "📅 <b>Генерация контент-плана</b>\n\n"
+        "План создаётся на основе:\n"
+        "• Вашей базы знаний (информация о продукте)\n"
+        "• Анализа контента конкурентов (если загружен)\n"
+        f"{info_text}\n\n"
         "Введите вашу нишу или тематику контента:\n\n"
         "💡 Примеры:\n"
         "• <i>Фитнес для начинающих</i>\n"
@@ -182,35 +194,32 @@ async def generate_plan(callback: CallbackQuery, state: FSMContext):
     period = data["period"]
     platforms = data["selected_platforms"]
     
-    # Данные вирусного контента если есть
-    viral_videos_data = data.get("viral_videos", [])
-    
     await state.update_data(posts_per_day=posts_per_day)
     await state.set_state(ContentPlanStates.generating)
     
     days = 7 if period == "week" else 30
     total = days * posts_per_day * len(platforms)
     
+    # Проверяем наличие контента конкурентов
+    comp_content = openai_service._load_competitors_content()
+    comp_info = "✅ Используется" if comp_content else "❌ Не загружен"
+    
     await callback.message.edit_text(
         f"⏳ Генерирую контент-план...\n\n"
         f"📝 Ниша: {niche}\n"
         f"📆 Период: {days} дней\n"
         f"📱 Платформ: {len(platforms)}\n"
-        f"📊 Всего идей: ~{total}"
+        f"📊 Всего идей: ~{total}\n"
+        f"🎯 Анализ конкурентов: {comp_info}"
     )
     
     try:
-        # Конвертируем данные если есть
-        viral_videos = None
-        if viral_videos_data:
-            viral_videos = [ViralVideo(**v) for v in viral_videos_data]
-        
         plan = await content_plan_service.generate_content_plan(
             niche=niche,
             period=period,
-            viral_videos=viral_videos,
             platforms=platforms,
-            posts_per_day=posts_per_day
+            posts_per_day=posts_per_day,
+            use_competitors_analysis=bool(comp_content)
         )
         
         # Сохраняем план
@@ -233,7 +242,7 @@ async def generate_plan(callback: CallbackQuery, state: FSMContext):
 async def show_content_plan(message, plan, page: int = 0):
     """Показывает контент-план постранично"""
     ideas = plan.ideas if hasattr(plan, 'ideas') else plan.get("ideas", [])
-    if isinstance(ideas[0], dict):
+    if ideas and isinstance(ideas[0], dict):
         ideas = [ContentIdea(**i) for i in ideas]
     
     per_page = 5
@@ -496,22 +505,19 @@ async def regenerate_plan(callback: CallbackQuery, state: FSMContext):
     period = data.get("period", "week")
     platforms = data.get("selected_platforms", ["tiktok"])
     posts_per_day = data.get("posts_per_day", 1)
-    viral_videos_data = data.get("viral_videos", [])
     
     await state.set_state(ContentPlanStates.generating)
     await callback.message.edit_text("⏳ Перегенерирую контент-план...")
     
     try:
-        viral_videos = None
-        if viral_videos_data:
-            viral_videos = [ViralVideo(**v) for v in viral_videos_data]
+        comp_content = openai_service._load_competitors_content()
         
         plan = await content_plan_service.generate_content_plan(
             niche=niche,
             period=period,
-            viral_videos=viral_videos,
             platforms=platforms,
-            posts_per_day=posts_per_day
+            posts_per_day=posts_per_day,
+            use_competitors_analysis=bool(comp_content)
         )
         
         await state.update_data(content_plan={

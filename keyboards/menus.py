@@ -14,18 +14,18 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     # Вторая строка
     builder.row(
         InlineKeyboardButton(text="🖼 Карусель", callback_data="menu:carousel"),
-        InlineKeyboardButton(text="🔥 Вирусный контент", callback_data="menu:viral")
+        InlineKeyboardButton(text="📝 SEO-статья", callback_data="menu:seo")
     )
     
     # Третья строка
     builder.row(
-        InlineKeyboardButton(text="📝 SEO-статья", callback_data="menu:seo"),
         InlineKeyboardButton(text="📅 Контент-план", callback_data="menu:content_plan")
     )
     
-    # Четвертая строка (одна кнопка по центру)
+    # Четвертая строка
     builder.row(
-        InlineKeyboardButton(text="📚 База знаний", callback_data="menu:knowledge")
+        InlineKeyboardButton(text="📚 База знаний", callback_data="menu:knowledge"),
+        InlineKeyboardButton(text="☁️ Google", callback_data="menu:google")
     )
     
     return builder.as_markup()
@@ -45,6 +45,7 @@ def knowledge_base_kb(files: list[str]) -> InlineKeyboardMarkup:
     """Меню управления базой знаний"""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="📤 Загрузить файл", callback_data="kb:upload"))
+    builder.row(InlineKeyboardButton(text="📁 Загрузить контент конкурентов", callback_data="kb:competitors"))
     if files:
         builder.row(InlineKeyboardButton(text="📋 Список файлов", callback_data="kb:list"))
         builder.row(InlineKeyboardButton(text="🗑 Удалить файл", callback_data="kb:delete"))
@@ -112,20 +113,5 @@ def files_list_kb(files: list[str]) -> InlineKeyboardMarkup:
     for file in files:
         builder.row(InlineKeyboardButton(text=f"🗑 {file}", callback_data=f"delete:{file}"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back:kb_menu"))
-    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
-    return builder.as_markup()
-
-def content_type_kb() -> InlineKeyboardMarkup:
-    """Выбор типа контента для вирусного контента"""
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="📹 Видео", callback_data="viral_type:video"),
-        InlineKeyboardButton(text="📸 Фото", callback_data="viral_type:photo")
-    )
-    builder.row(
-        InlineKeyboardButton(text="📝 Текст", callback_data="viral_type:text"),
-        InlineKeyboardButton(text="🎵 Аудио", callback_data="viral_type:audio")
-    )
-    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back:menu"))
     builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
     return builder.as_markup()

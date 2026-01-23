@@ -1,13 +1,16 @@
 from aiogram.fsm.state import State, StatesGroup
 
 class AvatarVideoStates(StatesGroup):
-    """Состояния для генерации видео с аватаром HeyGen"""
+    """Состояния для генерации видео с аватаром Kling"""
     waiting_topic = State()
     waiting_script_confirm = State()
     waiting_script_edit = State()
-    selecting_avatar = State()
-    selecting_voice = State()
-    confirming_generation = State()
+    waiting_video = State()  # Ожидание загрузки видео пользователя
+    selecting_avatar_source = State()  # Выбор: загрузить фото или сгенерировать
+    selecting_avatar_style = State()  # Выбор стиля генерируемого аватара
+    waiting_avatar_description = State()  # Описание для генерации аватара
+    waiting_avatar_image = State()  # Ожидание загрузки фото аватара
+    confirming_avatar = State()  # Подтверждение аватара
     generating = State()
 
 class SEOArticleStates(StatesGroup):
@@ -32,14 +35,6 @@ class KnowledgeBaseStates(StatesGroup):
     """Состояния для управления базой знаний"""
     waiting_file = State()
     confirming_delete = State()
-
-class ViralParserStates(StatesGroup):
-    """Состояния для парсинга вирусного контента"""
-    selecting_platform = State()
-    entering_handle = State()
-    selecting_sort = State()
-    viewing_results = State()
-    viewing_transcript = State()
 
 class ContentPlanStates(StatesGroup):
     """Состояния для генерации контент-плана"""

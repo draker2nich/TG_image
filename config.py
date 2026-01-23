@@ -13,16 +13,9 @@ class Config:
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
     
-    # HeyGen
-    HEYGEN_API_KEY: str = os.getenv("HEYGEN_API_KEY", "")
-    HEYGEN_BASE_URL: str = "https://api.heygen.com"
-    
-    # Kie.ai (Sora2, Veo3)
+    # Kie.ai (Sora2, Veo3, Kling, Nano Banana Pro)
     KIEAI_API_KEY: str = os.getenv("KIEAI_API_KEY", "")
     KIEAI_BASE_URL: str = "https://api.kie.ai"
-    
-    # ScrapeCreators (TikTok, Instagram, YouTube parsing)
-    SCRAPECREATORS_API_KEY: str = os.getenv("SCRAPECREATORS_API_KEY", "")
     
     # Google API (OAuth)
     GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -35,15 +28,14 @@ class Config:
     
     # Пути
     KNOWLEDGE_BASE_DIR: str = os.getenv("KNOWLEDGE_BASE_DIR", "knowledge_base")
+    COMPETITORS_DIR: str = os.getenv("COMPETITORS_DIR", "knowledge_base/competitors")
     
     def validate(self) -> dict[str, bool]:
         """Проверка наличия API ключей"""
         return {
             "telegram": bool(self.BOT_TOKEN),
             "openai": bool(self.OPENAI_API_KEY),
-            "heygen": bool(self.HEYGEN_API_KEY),
             "kieai": bool(self.KIEAI_API_KEY),
-            "scrapecreators": bool(self.SCRAPECREATORS_API_KEY),
             "google": bool(self.GOOGLE_CLIENT_ID and self.GOOGLE_CLIENT_SECRET),
         }
     

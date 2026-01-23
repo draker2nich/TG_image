@@ -2,7 +2,6 @@ import json
 from typing import Optional
 from dataclasses import dataclass, asdict
 from services.openai_service import openai_service
-from services.viral_parser import ViralVideo
 
 @dataclass
 class ContentIdea:
@@ -29,62 +28,9 @@ class ContentPlanService:
     def __init__(self):
         pass
     
-    async def analyze_viral_content(
-        self,
-        videos: list[ViralVideo],
-        niche: str = ""
-    ) -> dict:
-        """Анализирует вирусный контент и выявляет паттерны"""
-        if not openai_service.is_available():
-            raise RuntimeError("OpenAI API недоступен")
-        
-        # Формируем данные для анализа
-        content_data = []
-        for v in videos[:20]:  # Максимум 20 видео
-            content_data.append({
-                "platform": v.platform,
-                "title": v.title[:200],
-                "description": v.description[:500],
-                "views": v.views,
-                "likes": v.likes,
-                "engagement_rate": round(v.likes / v.views * 100, 2) if v.views > 0 else 0,
-                "duration": v.duration,
-                "transcript": v.transcript[:1000] if v.transcript else ""
-            })
-        
-        system = """Ты — эксперт по вирусному контенту и SMM-аналитик.
-Проанализируй предоставленные данные о популярном контенте и выяви:
-
-1. Общие паттерны успешного контента
-2. Типы хуков и заголовков, которые работают
-3. Оптимальную длительность
-4. Темы и форматы с высоким вовлечением
-5. Тренды и повторяющиеся элементы
-
-Ответь в формате JSON:
-{
-    "patterns": ["паттерн1", "паттерн2"],
-    "successful_hooks": ["хук1", "хук2"],
-    "optimal_duration": "X-Y секунд",
-    "trending_topics": ["тема1", "тема2"],
-    "content_formats": ["формат1", "формат2"],
-    "engagement_insights": "краткий вывод",
-    "recommendations": ["рекомендация1", "рекомендация2"]
-}"""
-
-        niche_context = f"\nНиша/тематика: {niche}" if niche else ""
-        
-        response = await openai_service.client.chat.completions.create(
-            model=openai_service.model,
-            messages=[
-                {"role": "developer", "content": system},
-                {"role": "user", "content": f"Данные контента:{niche_context}\n\n{json.dumps(content_data, ensure_ascii=False)}"}
-            ],
-            max_tokens=2000,
-            response_format={"type": "json_object"}
-        )
-        
-        return json.loads(response.choices[0].message.content)
+    async def analyze_competitors(self, niche: str = "") -> dict:
+        """Анализирует контент конкурентов из загруженных файлов"""
+        return await openai_service.analyze_competitors_content(niche)
     
     async def generate_content_ideas(
         self,
@@ -101,9 +47,9 @@ class ContentPlanService:
         kb_content = openai_service._load_knowledge_base()
         
         system = f"""Ты — креативный SMM-специалист и контент-мейкер.
-На основе анализа вирусного контента сгенерируй уникальные идеи.
+На основе анализа контента конкурентов сгенерируй уникальные идеи.
 
-Используй информацию из базы знаний если она релевантна:
+Используй информацию из базы знаний:
 {kb_content[:3000] if kb_content else 'База знаний пуста.'}
 
 Для каждой идеи укажи:
@@ -136,7 +82,7 @@ class ContentPlanService:
                     f"Ниша: {niche}\n"
                     f"Платформы: {', '.join(platforms)}\n"
                     f"Количество идей: {count}\n\n"
-                    f"Анализ вирусного контента:\n{json.dumps(analysis, ensure_ascii=False)}"
+                    f"Анализ конкурентов:\n{json.dumps(analysis, ensure_ascii=False)}"
                 )}
             ],
             max_tokens=4000,
@@ -164,10 +110,10 @@ class ContentPlanService:
     async def generate_content_plan(
         self,
         niche: str,
-        period: str = "week",  # week или month
-        viral_videos: list[ViralVideo] = None,
+        period: str = "week",
         platforms: list[str] = None,
-        posts_per_day: int = 1
+        posts_per_day: int = 1,
+        use_competitors_analysis: bool = True
     ) -> ContentPlan:
         """Генерирует полный контент-план"""
         if not openai_service.is_available():
@@ -175,16 +121,17 @@ class ContentPlanService:
         
         platforms = platforms or ["tiktok", "instagram"]
         
-        # Анализируем вирусный контент если есть
+        # Анализируем контент конкурентов из файлов
         analysis = {}
-        if viral_videos:
-            analysis = await self.analyze_viral_content(viral_videos, niche)
+        if use_competitors_analysis:
+            analysis = await self.analyze_competitors(niche)
         
         # Рассчитываем количество идей
         days = 7 if period == "week" else 30
         total_posts = days * posts_per_day * len(platforms)
         
         kb_content = openai_service._load_knowledge_base()
+        comp_content = openai_service._load_competitors_content()
         
         system = f"""Ты — стратег контент-маркетинга.
 Создай детальный контент-план с учётом:
@@ -193,10 +140,10 @@ class ContentPlanService:
 - Трендов и сезонности
 - Вовлечения аудитории
 
-База знаний:
+База знаний (информация о продукте/услуге):
 {kb_content[:2000] if kb_content else 'Пуста.'}
 
-Анализ вирусного контента:
+Анализ конкурентов:
 {json.dumps(analysis, ensure_ascii=False) if analysis else 'Не предоставлен.'}
 
 Создай план в формате JSON:
@@ -212,7 +159,7 @@ class ContentPlanService:
             "hashtags": ["#tag1", "#tag2"],
             "estimated_duration": "30 сек",
             "suggested_day": "Понедельник" или номер дня,
-            "inspiration_source": "Источник вдохновения если есть"
+            "inspiration_source": "На основе анализа конкурентов"
         }}
     ]
 }}"""
@@ -268,7 +215,7 @@ class ContentPlanService:
         system = f"""Ты — профессиональный сценарист для коротких видео.
 Напиши готовый сценарий для съёмки/озвучки.
 
-База знаний:
+Используй ТОЛЬКО информацию из базы знаний:
 {kb_content[:2000] if kb_content else 'Пуста.'}
 
 Формат сценария:

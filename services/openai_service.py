@@ -23,15 +23,14 @@ class OpenAIService:
         except Exception as e:
             return f"[Ошибка чтения {filepath}: {e}]"
     
-    def _load_knowledge_base(self) -> str:
-        """Загружает все файлы из базы знаний"""
-        kb_dir = config.KNOWLEDGE_BASE_DIR
-        if not os.path.exists(kb_dir):
-            return ""
+    def _load_files_from_dir(self, dir_path: str) -> list[tuple[str, str]]:
+        """Загружает все файлы из директории, возвращает список (filename, content)"""
+        if not os.path.exists(dir_path):
+            return []
         
-        content_parts = []
-        for filename in os.listdir(kb_dir):
-            filepath = os.path.join(kb_dir, filename)
+        files_content = []
+        for filename in os.listdir(dir_path):
+            filepath = os.path.join(dir_path, filename)
             if not os.path.isfile(filepath):
                 continue
             
@@ -39,21 +38,44 @@ class OpenAIService:
                 ext = os.path.splitext(filename)[1].lower()
                 
                 if ext == ".docx":
-                    # Читаем Word документ
                     content = self._read_docx(filepath)
                 elif ext in (".txt", ".md", ".json", ".csv"):
-                    # Читаем текстовые файлы
                     with open(filepath, 'r', encoding='utf-8') as f:
                         content = f.read()
                 elif ext == ".pdf":
-                    # PDF пропускаем пока (нужен отдельный парсер)
                     content = f"[PDF файл: {filename} - требуется парсер]"
                 else:
                     continue
                 
-                content_parts.append(f"=== {filename} ===\n{content}")
+                files_content.append((filename, content))
             except Exception as e:
-                content_parts.append(f"=== {filename} ===\n[Ошибка: {e}]")
+                files_content.append((filename, f"[Ошибка: {e}]"))
+        
+        return files_content
+    
+    def _load_knowledge_base(self) -> str:
+        """Загружает все файлы из базы знаний"""
+        files = self._load_files_from_dir(config.KNOWLEDGE_BASE_DIR)
+        
+        if not files:
+            return ""
+        
+        content_parts = []
+        for filename, content in files:
+            content_parts.append(f"=== {filename} ===\n{content}")
+        
+        return "\n\n".join(content_parts)
+    
+    def _load_competitors_content(self) -> str:
+        """Загружает контент конкурентов"""
+        files = self._load_files_from_dir(config.COMPETITORS_DIR)
+        
+        if not files:
+            return ""
+        
+        content_parts = []
+        for filename, content in files:
+            content_parts.append(f"=== Конкурент: {filename} ===\n{content}")
         
         return "\n\n".join(content_parts)
     
@@ -73,7 +95,7 @@ class OpenAIService:
 Используй ТОЛЬКО информацию из предоставленной базы знаний.
 НЕ ИСПОЛЬЗУЙ информацию из интернета или своих общих знаний.
 НЕ ВЫДУМЫВАЙ факты, которых нет в базе знаний.
-Пиши естественным разговорным языком для озвучки аватаром.
+Пиши естественным разговорным языком для озвучки.
 
 ВАЖНО: Если информации по теме нет в базе знаний, честно скажи об этом.
 
@@ -94,8 +116,6 @@ class OpenAIService:
         """Генерирует SEO-ключи и заголовок по теме"""
         if not self.client:
             raise RuntimeError("OpenAI API недоступен")
-        
-        kb_content = self._load_knowledge_base()
         
         system = """=Act (Действуй):
 Действуй как **эксперт по SEO с опытом 10+ лет**, который специализируется на глубоком и продуманном подборе SEO-ключей.
@@ -221,5 +241,55 @@ Context (Контекст):
             max_tokens=500
         )
         return response.choices[0].message.content
+    
+    async def analyze_competitors_content(self, niche: str = "") -> dict:
+        """Анализирует контент конкурентов из загруженных файлов"""
+        if not self.client:
+            raise RuntimeError("OpenAI API недоступен")
+        
+        comp_content = self._load_competitors_content()
+        
+        if not comp_content.strip():
+            return {
+                "patterns": [],
+                "successful_hooks": [],
+                "trending_topics": [],
+                "content_formats": [],
+                "engagement_insights": "Контент конкурентов не загружен",
+                "recommendations": []
+            }
+        
+        system = """Ты — эксперт по вирусному контенту и SMM-аналитик.
+Проанализируй предоставленные данные о контенте конкурентов и выяви:
+
+1. Общие паттерны успешного контента
+2. Типы хуков и заголовков, которые работают
+3. Популярные темы
+4. Форматы контента
+5. Рекомендации для создания контента
+
+Ответь в формате JSON:
+{
+    "patterns": ["паттерн1", "паттерн2"],
+    "successful_hooks": ["хук1", "хук2"],
+    "trending_topics": ["тема1", "тема2"],
+    "content_formats": ["формат1", "формат2"],
+    "engagement_insights": "краткий вывод",
+    "recommendations": ["рекомендация1", "рекомендация2"]
+}"""
+
+        niche_context = f"\nНиша/тематика: {niche}" if niche else ""
+        
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "developer", "content": system},
+                {"role": "user", "content": f"Контент конкурентов:{niche_context}\n\n{comp_content[:8000]}"}
+            ],
+            max_tokens=2000,
+            response_format={"type": "json_object"}
+        )
+        
+        return json.loads(response.choices[0].message.content)
 
 openai_service = OpenAIService()

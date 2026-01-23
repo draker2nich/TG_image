@@ -8,7 +8,7 @@ from aiogram.enums import ParseMode
 from config import config
 from handlers import (
     start, avatar_video, seo_article, short_video, 
-    knowledge_base, viral_ideas, content_plan, carousel
+    knowledge_base, content_plan, carousel
 )
 from handlers import google_auth
 from services.task_tracker import task_tracker
@@ -49,7 +49,6 @@ async def main():
     dp.include_router(seo_article.router)
     dp.include_router(short_video.router)
     dp.include_router(knowledge_base.router)
-    dp.include_router(viral_ideas.router)
     dp.include_router(content_plan.router)
     dp.include_router(carousel.router)
     dp.include_router(google_auth.router)
