@@ -6,6 +6,7 @@ from .carousel_service import carousel_service
 from .content_plan_service import content_plan_service
 from .task_tracker import task_tracker
 from .file_upload_service import file_upload_service
+from .subtitles_service import subtitles_service
 
 __all__ = [
     "openai_service",
@@ -15,5 +16,6 @@ __all__ = [
     "carousel_service",
     "content_plan_service",
     "task_tracker",
-    "file_upload_service"
+    "file_upload_service",
+    "subtitles_service"
 ]

@@ -97,35 +97,53 @@ class CarouselService:
         style: str,
         color_scheme: str
     ) -> str:
-        """Создаёт промпт для генерации изображения"""
+        """Создаёт промпт для генерации изображения через 4o Image API"""
         
         style_prompts = {
-            "современный минималистичный": "Modern minimalist design, clean lines, geometric shapes",
-            "яркий и динамичный": "Vibrant dynamic design, bold colors, energetic",
-            "профессиональный строгий": "Professional corporate design, structured layout",
-            "креативный и игривый": "Creative playful design, fun illustrations"
+            "современный минималистичный": "Modern minimalist design, clean lines, geometric shapes, elegant typography",
+            "яркий и динамичный": "Vibrant dynamic design, bold colors, energetic, eye-catching graphics",
+            "профессиональный строгий": "Professional corporate design, structured layout, business aesthetic",
+            "креативный и игривый": "Creative playful design, fun illustrations, artistic elements"
         }
         
         color_prompts = {
-            "dark": "dark background, light text, neon accents",
-            "light": "light background, dark text, colorful accents",
-            "gradient": "gradient background, white text"
+            "dark": "dark background (#1a1a2e or similar), light text, neon or vibrant accents",
+            "light": "light/white background, dark text, colorful modern accents",
+            "gradient": "beautiful gradient background (purple-blue or orange-pink), white text"
         }
         
         base_style = style_prompts.get(style, style_prompts["современный минималистичный"])
         color_style = color_prompts.get(color_scheme, color_prompts["dark"])
         
+        # Формируем контент для слайда
         if slide.slide_type == "cover":
-            content_desc = f'Cover slide. Title: "{slide.title}". Subtitle: "{slide.content}"'
+            content_desc = f"""Instagram/Telegram carousel COVER slide design.
+Main headline text: "{slide.title}"
+Subtitle: "{slide.content}"
+Make the title prominent and eye-catching."""
+        
         elif slide.slide_type == "cta":
-            content_desc = f'CTA slide. Headline: "{slide.title}". Action: "{slide.content}"'
+            content_desc = f"""Instagram/Telegram carousel CTA (call-to-action) slide design.
+Main text: "{slide.title}"
+Action text: "{slide.content}"
+Include visual elements that encourage action (arrows, buttons, icons)."""
+        
         else:
-            content_desc = f'Content slide. Title: "{slide.title}". Points: {slide.content}'
+            content_desc = f"""Instagram/Telegram carousel CONTENT slide design.
+Title: "{slide.title}"
+Content/bullet points: {slide.content}
+Layout should be clean and easy to read."""
 
         return f"""{base_style}. {color_style}.
+
 {content_desc}
-Slide {slide.slide_number}/{slide.total_slides} in corner.
-Square format 1:1, Instagram carousel style, readable text."""
+
+Important requirements:
+- Square format (1:1 aspect ratio) for Instagram carousel
+- Slide indicator showing {slide.slide_number}/{slide.total_slides} in bottom corner
+- Text must be clearly readable and properly integrated into the design
+- High quality, professional social media graphic
+- Modern 2024 design trends"""
     
     async def generate_slide_image(
         self,
@@ -134,13 +152,16 @@ Square format 1:1, Instagram carousel style, readable text."""
         color_scheme: str = "dark",
         callback_url: Optional[str] = None
     ) -> dict:
-        """Генерирует изображение через Google Nano Banana"""
+        """Генерирует изображение через 4o Image API (GPT-4o)"""
         prompt = self._build_slide_prompt(slide, style, color_scheme)
         
-        return await kieai_service.generate_nano_banana_image(
+        return await kieai_service.generate_4o_image(
             prompt=prompt,
-            aspect_ratio="1:1",
-            callback_url=callback_url
+            size="1:1",  # Квадрат для карусели
+            n_variants=1,
+            is_enhance=True,  # Улучшение для сложных дизайнов
+            callback_url=callback_url,
+            enable_fallback=True  # Fallback на Flux если GPT-4o недоступен
         )
     
     async def generate_carousel_images(
@@ -148,7 +169,7 @@ Square format 1:1, Instagram carousel style, readable text."""
         content: CarouselContent,
         callback_url: Optional[str] = None
     ) -> list[dict]:
-        """Генерирует изображения для всех слайдов"""
+        """Генерирует изображения для всех слайдов через 4o Image API"""
         tasks = []
         
         for slide in content.slides:
@@ -187,16 +208,17 @@ Square format 1:1, Instagram carousel style, readable text."""
                     "error": str(e)
                 })
             
-            await asyncio.sleep(0.5)
+            # Небольшая задержка между запросами
+            await asyncio.sleep(1)
         
         return tasks
     
-    async def wait_for_image(self, task_id: str, timeout: int = 300, poll_interval: int = 5) -> Optional[str]:
-        """Ожидает завершения генерации"""
+    async def wait_for_image(self, task_id: str, timeout: int = 300, poll_interval: int = 10) -> Optional[str]:
+        """Ожидает завершения генерации 4o Image"""
         elapsed = 0
         
         while elapsed < timeout:
-            result = await kieai_service.get_task_status(task_id)
+            result = await kieai_service.get_4o_image_status(task_id)
             
             if result.get("code") != 200:
                 await asyncio.sleep(poll_interval)
@@ -204,23 +226,33 @@ Square format 1:1, Instagram carousel style, readable text."""
                 continue
             
             data = result.get("data", {})
-            state = data.get("state", "").lower()
+            success_flag = data.get("successFlag")
             
-            if state in ("success", "completed", "done"):
-                result_json = data.get("resultJson", {})
-                if isinstance(result_json, str):
-                    try:
-                        result_json = json.loads(result_json)
-                    except:
-                        result_json = {}
+            # successFlag: 0 = generating, 1 = success, 2 = failed
+            if success_flag == 1:
+                # Успешно завершено
+                response = data.get("response", {})
+                if isinstance(response, dict):
+                    urls = response.get("result_urls", [])
+                    if urls:
+                        return urls[0]
                 
-                urls = result_json.get("resultUrls", [])
-                if urls:
-                    return urls[0]
-                return data.get("imageUrl") or data.get("url")
-            
-            elif state in ("failed", "error"):
+                # Альтернативный путь для resultUrls
+                result_urls = data.get("resultUrls", [])
+                if result_urls:
+                    return result_urls[0]
+                
                 return None
+            
+            elif success_flag == 2:
+                # Ошибка генерации
+                error_msg = data.get("errorMessage", "Unknown error")
+                print(f"4o Image generation failed: {error_msg}")
+                return None
+            
+            # success_flag == 0, ещё генерируется
+            progress = data.get("progress", "0.00")
+            print(f"4o Image progress: {float(progress) * 100:.1f}%")
             
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval

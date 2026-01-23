@@ -11,6 +11,7 @@ class AvatarVideoStates(StatesGroup):
     waiting_avatar_description = State()
     waiting_avatar_image = State()
     confirming_avatar = State()
+    selecting_subtitles = State()  # НОВОЕ: выбор стиля субтитров
     generating = State()
 
 class SEOArticleStates(StatesGroup):
