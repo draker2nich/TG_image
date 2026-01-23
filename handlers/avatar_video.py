@@ -15,6 +15,7 @@ from services.openai_service import openai_service
 from services.kling_avatar_service import kling_avatar_service
 from services.kieai_service import kieai_service
 from services.task_tracker import task_tracker, VideoTask
+from services.file_upload_service import file_upload_service
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -73,7 +74,7 @@ async def start_avatar_flow(callback: CallbackQuery, state: FSMContext):
         "🎭 <b>Создание видео с AI-аватаром (Kling)</b>\n\n"
         "Процесс:\n"
         "1️⃣ Получите сценарий на основе базы знаний\n"
-        "2️⃣ Запишите аудио/видео по сценарию\n"
+        "2️⃣ Запишите аудио по сценарию\n"
         "3️⃣ Загрузите аудио в бот\n"
         "4️⃣ Загрузите или сгенерируйте фото-аватар\n"
         "5️⃣ Получите готовое видео с lip-sync\n\n"
@@ -165,46 +166,61 @@ async def process_voice(message: Message, state: FSMContext, bot: Bot):
     """Получение голосового сообщения"""
     voice = message.voice
     
-    await message.answer("⏳ Загружаю аудио...")
+    await message.answer("⏳ Загружаю аудио на сервер...")
     
     try:
-        file = await bot.get_file(voice.file_id)
-        audio_url = f"https://api.telegram.org/file/bot{bot.token}/{file.file_path}"
+        # Скачиваем и загружаем на внешний хостинг
+        audio_url = await file_upload_service.upload_telegram_file(
+            bot=bot,
+            file_id=voice.file_id,
+            filename=f"voice_{message.from_user.id}_{datetime.now().timestamp()}.ogg"
+        )
         
         await state.update_data(audio_url=audio_url, audio_duration=voice.duration)
         await state.set_state(AvatarVideoStates.selecting_avatar_source)
         
         await message.answer(
-            f"✅ <b>Аудио получено!</b>\n⏱ Длительность: {voice.duration} сек\n\n"
+            f"✅ <b>Аудио загружено!</b>\n⏱ Длительность: {voice.duration} сек\n\n"
             "Теперь выберите аватар:",
             parse_mode="HTML",
             reply_markup=avatar_source_kb()
         )
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
+        logger.error(f"Voice upload error: {e}")
+        await message.answer(f"❌ Ошибка загрузки: {e}", reply_markup=cancel_kb())
 
 @router.message(AvatarVideoStates.waiting_video, F.audio)
 async def process_audio(message: Message, state: FSMContext, bot: Bot):
     """Получение аудиофайла"""
     audio = message.audio
     
-    await message.answer("⏳ Загружаю аудио...")
+    await message.answer("⏳ Загружаю аудио на сервер...")
     
     try:
-        file = await bot.get_file(audio.file_id)
-        audio_url = f"https://api.telegram.org/file/bot{bot.token}/{file.file_path}"
+        # Определяем расширение файла
+        ext = "mp3"
+        if audio.file_name:
+            ext = audio.file_name.split('.')[-1] if '.' in audio.file_name else "mp3"
+        
+        # Скачиваем и загружаем на внешний хостинг
+        audio_url = await file_upload_service.upload_telegram_file(
+            bot=bot,
+            file_id=audio.file_id,
+            filename=f"audio_{message.from_user.id}_{datetime.now().timestamp()}.{ext}"
+        )
         
         await state.update_data(audio_url=audio_url, audio_duration=audio.duration)
         await state.set_state(AvatarVideoStates.selecting_avatar_source)
         
         await message.answer(
-            f"✅ <b>Аудио получено!</b>\n⏱ Длительность: {audio.duration} сек\n\n"
+            f"✅ <b>Аудио загружено!</b>\n⏱ Длительность: {audio.duration} сек\n\n"
             "Теперь выберите аватар:",
             parse_mode="HTML",
             reply_markup=avatar_source_kb()
         )
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
+        logger.error(f"Audio upload error: {e}")
+        await message.answer(f"❌ Ошибка загрузки: {e}", reply_markup=cancel_kb())
 
 @router.message(AvatarVideoStates.waiting_video)
 async def process_audio_invalid(message: Message):
@@ -353,25 +369,31 @@ async def wait_for_image_result(task_id: str, timeout: int = 180) -> str:
 
 @router.message(AvatarVideoStates.waiting_avatar_image, F.photo)
 async def process_avatar_photo(message: Message, state: FSMContext, bot: Bot):
-    photo = message.photo[-1]
+    """Обработка загруженного фото аватара"""
+    photo = message.photo[-1]  # Берём максимальное качество
     
-    await message.answer("⏳ Загружаю фото...")
+    await message.answer("⏳ Загружаю фото на сервер...")
     
     try:
-        file = await bot.get_file(photo.file_id)
-        avatar_url = f"https://api.telegram.org/file/bot{bot.token}/{file.file_path}"
+        # Скачиваем и загружаем на внешний хостинг
+        avatar_url = await file_upload_service.upload_telegram_file(
+            bot=bot,
+            file_id=photo.file_id,
+            filename=f"avatar_{message.from_user.id}_{datetime.now().timestamp()}.jpg"
+        )
         
         await state.update_data(avatar_image_url=avatar_url)
         await state.set_state(AvatarVideoStates.confirming_avatar)
         
         await message.answer_photo(
             photo=avatar_url,
-            caption="✅ <b>Фото получено!</b>\n\nИспользовать как аватар?",
+            caption="✅ <b>Фото загружено!</b>\n\nИспользовать как аватар?",
             parse_mode="HTML",
             reply_markup=confirm_avatar_kb()
         )
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
+        logger.error(f"Photo upload error: {e}")
+        await message.answer(f"❌ Ошибка загрузки: {e}", reply_markup=cancel_kb())
 
 @router.message(AvatarVideoStates.waiting_avatar_image)
 async def process_avatar_invalid(message: Message):
@@ -386,7 +408,6 @@ async def confirm_avatar_and_generate(callback: CallbackQuery, state: FSMContext
     avatar_url = data.get("avatar_image_url")
     
     if not audio_url or not avatar_url:
-        # Отвечаем новым сообщением, т.к. предыдущее - фото
         await callback.message.answer(
             "❌ Ошибка: не найдены данные. Начните заново.",
             reply_markup=back_to_menu_kb()
@@ -395,7 +416,6 @@ async def confirm_avatar_and_generate(callback: CallbackQuery, state: FSMContext
         return
     
     await state.set_state(AvatarVideoStates.generating)
-    # Отправляем новое сообщение вместо edit (предыдущее - фото)
     await callback.message.answer(
         "🎬 <b>Запускаю генерацию видео...</b>\n\n"
         "Это может занять 5-15 минут.\n"
@@ -409,6 +429,8 @@ async def confirm_avatar_and_generate(callback: CallbackQuery, state: FSMContext
             audio_url=audio_url,
             prompt=data.get("topic", "")
         )
+        
+        logger.info(f"Kling API response: {result}")
         
         if result.get("code") != 200:
             raise Exception(result.get("msg", "Ошибка API"))
@@ -428,11 +450,10 @@ async def confirm_avatar_and_generate(callback: CallbackQuery, state: FSMContext
         )
         task_tracker.add_task(video_task)
         
-
         await callback.message.answer(
-            "🎬 <b>Запускаю генерацию видео...</b>\n\n"
-            "Это может занять 5-15 минут.\n"
-            "Вы получите уведомление.",
+            f"✅ <b>Генерация запущена!</b>\n\n"
+            f"🆔 Task ID: <code>{task_id}</code>\n\n"
+            f"⏳ Ожидайте уведомление (5-15 минут).",
             parse_mode="HTML",
             reply_markup=back_to_menu_kb()
         )
@@ -448,7 +469,8 @@ async def confirm_avatar_and_generate(callback: CallbackQuery, state: FSMContext
 @router.callback_query(AvatarVideoStates.confirming_avatar, F.data == "avatar:regenerate_image")
 async def regenerate_avatar_image(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AvatarVideoStates.selecting_avatar_style)
-    await callback.message.edit_text(
+    # Отправляем новое сообщение вместо edit, т.к. предыдущее - фото
+    await callback.message.answer(
         "🎨 <b>Генерация аватара</b>\n\nВыберите стиль:",
         parse_mode="HTML",
         reply_markup=avatar_style_kb()
@@ -458,7 +480,8 @@ async def regenerate_avatar_image(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(AvatarVideoStates.confirming_avatar, F.data == "avatar:source:upload")
 async def switch_to_upload(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AvatarVideoStates.waiting_avatar_image)
-    await callback.message.edit_text(
+    # Отправляем новое сообщение вместо edit, т.к. предыдущее - фото
+    await callback.message.answer(
         "📤 <b>Загрузите фото аватара</b>\n\n📷 Отправьте фото:",
         parse_mode="HTML",
         reply_markup=cancel_kb()
