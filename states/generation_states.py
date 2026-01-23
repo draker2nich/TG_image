@@ -1,43 +1,38 @@
 from aiogram.fsm.state import State, StatesGroup
 
 class AvatarVideoStates(StatesGroup):
-    """Состояния для генерации видео с аватаром Kling"""
+    """Состояния для видео с аватаром Kling"""
     waiting_topic = State()
     waiting_script_confirm = State()
     waiting_script_edit = State()
-    waiting_video = State()  # Ожидание загрузки видео пользователя
-    selecting_avatar_source = State()  # Выбор: загрузить фото или сгенерировать
-    selecting_avatar_style = State()  # Выбор стиля генерируемого аватара
-    waiting_avatar_description = State()  # Описание для генерации аватара
-    waiting_avatar_image = State()  # Ожидание загрузки фото аватара
-    confirming_avatar = State()  # Подтверждение аватара
+    waiting_video = State()  # Ожидание аудио
+    selecting_avatar_source = State()
+    selecting_avatar_style = State()
+    waiting_avatar_description = State()
+    waiting_avatar_image = State()
+    confirming_avatar = State()
     generating = State()
 
 class SEOArticleStates(StatesGroup):
-    """Состояния для генерации SEO-статей"""
+    """Состояния для SEO-статей (упрощённые)"""
     waiting_topic = State()
-    waiting_keywords = State()
-    waiting_outline_confirm = State()
-    waiting_article_confirm = State()
-    waiting_edit = State()
 
 class ShortVideoStates(StatesGroup):
-    """Состояния для генерации коротких видео Sora2/Veo3"""
+    """Состояния для Sora2/Veo3"""
     selecting_model = State()
     selecting_mode = State()
     waiting_prompt = State()
     waiting_image = State()
     selecting_aspect = State()
-    confirming_generation = State()
     generating = State()
 
 class KnowledgeBaseStates(StatesGroup):
-    """Состояния для управления базой знаний"""
+    """Состояния для базы знаний"""
     waiting_file = State()
     confirming_delete = State()
 
 class ContentPlanStates(StatesGroup):
-    """Состояния для генерации контент-плана"""
+    """Состояния для контент-плана"""
     entering_niche = State()
     selecting_period = State()
     selecting_platforms = State()
@@ -47,7 +42,7 @@ class ContentPlanStates(StatesGroup):
     selecting_idea = State()
 
 class CarouselStates(StatesGroup):
-    """Состояния для генерации каруселей"""
+    """Состояния для каруселей"""
     entering_topic = State()
     selecting_slides_count = State()
     selecting_style = State()

@@ -4,55 +4,86 @@ from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 
 from states.generation_states import SEOArticleStates
-from keyboards.menus import cancel_kb, confirm_edit_kb, back_to_menu_kb
+from keyboards.menus import cancel_kb, back_to_menu_kb
 from services.openai_service import openai_service
+from services.google_service import google_service
 
 router = Router()
 
-async def upload_article_to_google(article: str, topic: str, seo_title: str = "") -> tuple[bool, str]:
-    """Загружает статью на Google Drive и логирует"""
-    from services.google_service import google_service
+async def save_article_to_docx(article: str, seo_title: str = "") -> bytes:
+    """Сохраняет статью в формате DOCX"""
+    from docx import Document
+    from docx.shared import Pt
+    import io
     
+    doc = Document()
+    
+    # Заголовок
+    if seo_title:
+        title = doc.add_heading(seo_title, 0)
+    
+    # Разбираем контент по строкам
+    lines = article.split('\n')
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        # Заголовки H2
+        if line.startswith('## '):
+            doc.add_heading(line[3:], level=2)
+        # Заголовки H3
+        elif line.startswith('### '):
+            doc.add_heading(line[4:], level=3)
+        # Заголовок H1 (пропускаем если уже добавили seo_title)
+        elif line.startswith('# ') and not seo_title:
+            doc.add_heading(line[2:], level=1)
+        elif line.startswith('# '):
+            continue
+        # Обычный текст
+        else:
+            # Убираем markdown bold/italic
+            clean_line = line.replace('**', '').replace('*', '').replace('__', '')
+            doc.add_paragraph(clean_line)
+    
+    # Сохраняем в байты
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+async def upload_to_google(content: bytes, filename: str, title: str) -> str:
+    """Загружает на Google Drive и логирует"""
     try:
-        if not await google_service.load_token():
-            return False, ""
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        file_name = f"SEO_{topic[:30].replace(' ', '_')}_{timestamp}.md"
-        
-        # Добавляем заголовок
-        content = article
-        if seo_title and not article.startswith(f"# {seo_title}"):
-            content = f"# {seo_title}\n\n{article}"
+        if not await google_service.initialize():
+            return ""
         
         result = await google_service.upload_file_to_drive(
-            file_content=content.encode("utf-8"),
-            file_name=file_name,
-            mime_type="text/markdown"
+            file_content=content,
+            file_name=filename,
+            mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
         
         if result.success:
             await google_service.log_content(
                 content_type="seo_article",
-                title=seo_title or topic,
+                title=title,
                 status="uploaded",
                 file_url=result.file_url or "",
-                platform="blog",
-                notes=f"Keywords: {topic}"
+                platform="blog"
             )
-            return True, result.file_url or ""
-        
-        return False, ""
+            return result.file_url or ""
+        return ""
     except Exception as e:
-        print(f"Error uploading article: {e}")
-        return False, ""
+        print(f"Upload error: {e}")
+        return ""
 
 @router.callback_query(F.data == "menu:seo")
 async def start_seo_flow(callback: CallbackQuery, state: FSMContext):
     """Начало создания SEO-статьи"""
     if not openai_service.is_available():
         await callback.message.edit_text(
-            "⚠️ OpenAI API не настроен.\nДобавьте OPENAI_API_KEY в переменные окружения.",
+            "⚠️ OpenAI API не настроен.\nДобавьте OPENAI_API_KEY.",
             reply_markup=back_to_menu_kb()
         )
         await callback.answer()
@@ -61,7 +92,8 @@ async def start_seo_flow(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SEOArticleStates.waiting_topic)
     await callback.message.edit_text(
         "📝 <b>Создание SEO-статьи</b>\n\n"
-        "Введите тему статьи.\n\n"
+        "Статья будет написана на основе вашей базы знаний (.docx файлов).\n\n"
+        "Введите тему статьи:\n\n"
         "💡 Пример: <i>Как выбрать CRM-систему для малого бизнеса</i>",
         parse_mode="HTML",
         reply_markup=cancel_kb()
@@ -69,296 +101,65 @@ async def start_seo_flow(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 @router.message(SEOArticleStates.waiting_topic)
-async def process_seo_topic(message: Message, state: FSMContext):
-    """Получение темы и автоматическая генерация SEO-ключей"""
+async def process_topic_and_generate(message: Message, state: FSMContext):
+    """Получение темы и генерация статьи сразу"""
     topic = message.text.strip()
-    await state.update_data(topic=topic)
     
-    await message.answer("⏳ Анализирую тему и подбираю SEO-ключи...")
+    await message.answer("⏳ Генерирую SEO-статью... Это займёт 1-2 минуты.")
     
     try:
+        # 1. Генерируем SEO-ключи
         seo_data = await openai_service.generate_seo_keywords(topic)
+        keywords = [k.strip() for k in seo_data.get("keywords", "").split(",") if k.strip()]
+        seo_title = seo_data.get("seo_title", topic)
         
-        keywords_str = seo_data.get("keywords", "")
-        keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
-        seo_title = seo_data.get("seo_title", "")
+        # 2. Генерируем структуру
+        outline = await openai_service.generate_seo_outline(topic, keywords, seo_title)
         
-        await state.update_data(
-            keywords=keywords,
-            keywords_str=keywords_str,
-            seo_title=seo_title
+        # 3. Генерируем полную статью
+        article = await openai_service.generate_seo_article(topic, keywords, outline, seo_title)
+        
+        # 4. Сохраняем в DOCX
+        docx_content = await save_article_to_docx(article, seo_title)
+        
+        # 5. Формируем имя файла
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_topic = "".join(c if c.isalnum() or c in " -_" else "" for c in topic)[:30]
+        filename = f"SEO_{safe_topic.replace(' ', '_')}_{timestamp}.docx"
+        
+        # 6. Загружаем на Google Drive
+        google_url = await upload_to_google(docx_content, filename, seo_title)
+        
+        # 7. Отправляем пользователю
+        file = BufferedInputFile(docx_content, filename=filename)
+        
+        google_info = ""
+        if google_url:
+            google_info = f"\n\n☁️ <a href='{google_url}'>Открыть на Google Drive</a>"
+        
+        await message.answer_document(
+            file,
+            caption=(
+                f"✅ <b>SEO-статья готова!</b>\n\n"
+                f"📰 <b>Заголовок:</b> {seo_title}\n"
+                f"🔑 <b>Ключи:</b> {', '.join(keywords[:5])}"
+                f"{google_info}"
+            ),
+            parse_mode="HTML"
         )
         
-        await state.set_state(SEOArticleStates.waiting_keywords)
+        await state.clear()
         
+        # Возвращаем в меню
+        from keyboards.menus import main_menu_kb
         await message.answer(
-            f"🔍 <b>SEO-анализ готов!</b>\n\n"
-            f"📌 <b>Тема:</b> {topic}\n\n"
-            f"🔑 <b>Ключевые слова:</b>\n<i>{keywords_str}</i>\n\n"
-            f"📰 <b>SEO-заголовок:</b>\n<i>{seo_title}</i>\n\n"
-            f"Хотите использовать эти ключи или ввести свои?",
-            parse_mode="HTML",
-            reply_markup=confirm_edit_kb()
+            "Выберите следующее действие:",
+            reply_markup=main_menu_kb()
         )
+        
     except Exception as e:
-        await state.set_state(SEOArticleStates.waiting_keywords)
         await message.answer(
-            f"⚠️ Не удалось автоматически подобрать ключи: {e}\n\n"
-            "🔑 Введите ключевые слова через запятую.\n\n"
-            "💡 Пример: <i>CRM, автоматизация, малый бизнес, продажи</i>",
-            parse_mode="HTML",
-            reply_markup=cancel_kb()
+            f"❌ Ошибка генерации: {e}",
+            reply_markup=back_to_menu_kb()
         )
-
-@router.callback_query(SEOArticleStates.waiting_keywords, F.data == "confirm")
-async def confirm_keywords(callback: CallbackQuery, state: FSMContext):
-    """Подтверждение ключей — генерация структуры"""
-    data = await state.get_data()
-    
-    await callback.message.edit_text("⏳ Генерирую структуру статьи...")
-    
-    try:
-        outline = await openai_service.generate_seo_outline(
-            data["topic"], 
-            data.get("keywords", []),
-            data.get("seo_title")
-        )
-        await state.update_data(outline=outline)
-        await state.set_state(SEOArticleStates.waiting_outline_confirm)
-        
-        await callback.message.edit_text(
-            f"📋 <b>Структура статьи:</b>\n\n{outline}\n\nВыберите действие:",
-            parse_mode="HTML",
-            reply_markup=confirm_edit_kb()
-        )
-    except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=back_to_menu_kb())
-    
-    await callback.answer()
-
-@router.callback_query(SEOArticleStates.waiting_keywords, F.data == "edit")
-async def edit_keywords(callback: CallbackQuery, state: FSMContext):
-    """Редактирование ключей вручную"""
-    await callback.message.edit_text(
-        "🔑 Введите ключевые слова через запятую.\n\n"
-        "💡 Пример: <i>CRM, автоматизация, малый бизнес, продажи</i>",
-        parse_mode="HTML",
-        reply_markup=cancel_kb()
-    )
-    await state.update_data(manual_input=True, seo_title=None)
-    await callback.answer()
-
-@router.callback_query(SEOArticleStates.waiting_keywords, F.data == "regenerate")
-async def regenerate_keywords(callback: CallbackQuery, state: FSMContext):
-    """Перегенерация SEO-ключей"""
-    data = await state.get_data()
-    topic = data["topic"]
-    
-    await callback.message.edit_text("⏳ Перегенерирую SEO-ключи...")
-    
-    try:
-        seo_data = await openai_service.generate_seo_keywords(topic)
-        
-        keywords_str = seo_data.get("keywords", "")
-        keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
-        seo_title = seo_data.get("seo_title", "")
-        
-        await state.update_data(keywords=keywords, keywords_str=keywords_str, seo_title=seo_title)
-        
-        await callback.message.edit_text(
-            f"🔍 <b>Новый SEO-анализ:</b>\n\n"
-            f"📌 <b>Тема:</b> {topic}\n\n"
-            f"🔑 <b>Ключевые слова:</b>\n<i>{keywords_str}</i>\n\n"
-            f"📰 <b>SEO-заголовок:</b>\n<i>{seo_title}</i>",
-            parse_mode="HTML",
-            reply_markup=confirm_edit_kb()
-        )
-    except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=back_to_menu_kb())
-    
-    await callback.answer()
-
-@router.message(SEOArticleStates.waiting_keywords)
-async def process_manual_keywords(message: Message, state: FSMContext):
-    """Обработка вручную введённых ключей"""
-    text = message.text.strip()
-    keywords = [] if text == "-" else [k.strip() for k in text.split(",") if k.strip()]
-    
-    data = await state.get_data()
-    topic = data["topic"]
-    
-    await state.update_data(keywords=keywords, keywords_str=text if text != "-" else "")
-    await message.answer("⏳ Генерирую структуру статьи...")
-    
-    try:
-        outline = await openai_service.generate_seo_outline(topic, keywords, data.get("seo_title"))
-        await state.update_data(outline=outline)
-        await state.set_state(SEOArticleStates.waiting_outline_confirm)
-        
-        await message.answer(
-            f"📋 <b>Структура статьи:</b>\n\n{outline}\n\nВыберите действие:",
-            parse_mode="HTML",
-            reply_markup=confirm_edit_kb()
-        )
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=back_to_menu_kb())
-
-@router.callback_query(SEOArticleStates.waiting_outline_confirm, F.data == "confirm")
-async def confirm_outline(callback: CallbackQuery, state: FSMContext):
-    """Подтверждение структуры — генерация статьи"""
-    data = await state.get_data()
-    
-    await callback.message.edit_text("⏳ Генерирую статью... Это может занять минуту.")
-    
-    try:
-        article = await openai_service.generate_seo_article(
-            data["topic"], data.get("keywords", []), data["outline"], data.get("seo_title")
-        )
-        await state.update_data(article=article)
-        await state.set_state(SEOArticleStates.waiting_article_confirm)
-        
-        if len(article) > 3500:
-            parts = [article[i:i+3500] for i in range(0, len(article), 3500)]
-            for i, part in enumerate(parts[:-1]):
-                await callback.message.answer(f"📄 Часть {i+1}:\n\n{part}")
-            await callback.message.answer(
-                f"📄 Часть {len(parts)}:\n\n{parts[-1]}\n\nВыберите действие:",
-                reply_markup=confirm_edit_kb()
-            )
-        else:
-            await callback.message.edit_text(
-                f"📄 <b>Статья готова:</b>\n\n{article}\n\nВыберите действие:",
-                parse_mode="HTML",
-                reply_markup=confirm_edit_kb()
-            )
-    except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=back_to_menu_kb())
-    
-    await callback.answer()
-
-@router.callback_query(SEOArticleStates.waiting_outline_confirm, F.data == "regenerate")
-async def regenerate_outline(callback: CallbackQuery, state: FSMContext):
-    """Перегенерация структуры"""
-    data = await state.get_data()
-    
-    await callback.message.edit_text("⏳ Генерирую новую структуру...")
-    
-    try:
-        outline = await openai_service.generate_seo_outline(
-            data["topic"], data.get("keywords", []), data.get("seo_title")
-        )
-        await state.update_data(outline=outline)
-        
-        await callback.message.edit_text(
-            f"📋 <b>Новая структура:</b>\n\n{outline}\n\nВыберите действие:",
-            parse_mode="HTML",
-            reply_markup=confirm_edit_kb()
-        )
-    except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=back_to_menu_kb())
-    
-    await callback.answer()
-
-@router.callback_query(SEOArticleStates.waiting_outline_confirm, F.data == "edit")
-async def edit_outline(callback: CallbackQuery, state: FSMContext):
-    """Редактирование структуры"""
-    await state.set_state(SEOArticleStates.waiting_edit)
-    await state.update_data(editing="outline")
-    
-    await callback.message.edit_text("✏️ Отправьте отредактированную структуру:", reply_markup=cancel_kb())
-    await callback.answer()
-
-@router.message(SEOArticleStates.waiting_edit)
-async def process_edit(message: Message, state: FSMContext):
-    """Обработка редактирования"""
-    data = await state.get_data()
-    editing = data.get("editing", "outline")
-    
-    if editing == "outline":
-        await state.update_data(outline=message.text.strip())
-        await state.set_state(SEOArticleStates.waiting_outline_confirm)
-        await message.answer(
-            f"📋 <b>Обновлённая структура:</b>\n\n{message.text.strip()}\n\nВыберите действие:",
-            parse_mode="HTML",
-            reply_markup=confirm_edit_kb()
-        )
-
-@router.callback_query(SEOArticleStates.waiting_article_confirm, F.data == "confirm")
-async def finish_article(callback: CallbackQuery, state: FSMContext):
-    """Завершение — отправка статьи файлом и загрузка на Google Drive"""
-    data = await state.get_data()
-    article = data["article"]
-    topic = data["topic"][:30]
-    seo_title = data.get("seo_title", "")
-    
-    if seo_title and not article.startswith(f"# {seo_title}"):
-        article = f"# {seo_title}\n\n{article}"
-    
-    # Отправляем как файл
-    file = BufferedInputFile(
-        article.encode("utf-8"),
-        filename=f"article_{topic.replace(' ', '_')}.md"
-    )
-    
-    await callback.message.answer_document(
-        file,
-        caption=f"✅ Статья сохранена!\n📰 <b>Заголовок:</b> {seo_title}" if seo_title else "✅ Статья сохранена!",
-        parse_mode="HTML"
-    )
-    
-    # Загружаем на Google Drive
-    success, google_url = await upload_article_to_google(article, data["topic"], seo_title)
-    
-    google_info = ""
-    if success and google_url:
-        google_info = f"\n\n☁️ <a href='{google_url}'>Открыть на Google Drive</a>"
-    
-    await callback.message.edit_text(
-        f"✅ Статья готова и отправлена файлом!{google_info}",
-        parse_mode="HTML",
-        reply_markup=back_to_menu_kb(),
-        disable_web_page_preview=True
-    )
-    await state.clear()
-    await callback.answer()
-
-@router.callback_query(SEOArticleStates.waiting_article_confirm, F.data == "regenerate")
-async def regenerate_article(callback: CallbackQuery, state: FSMContext):
-    """Перегенерация статьи"""
-    data = await state.get_data()
-    
-    await callback.message.edit_text("⏳ Генерирую новую версию статьи...")
-    
-    try:
-        article = await openai_service.generate_seo_article(
-            data["topic"], data.get("keywords", []), data["outline"], data.get("seo_title")
-        )
-        await state.update_data(article=article)
-        
-        if len(article) > 3500:
-            await callback.message.edit_text("📄 Новая статья (см. ниже):")
-            parts = [article[i:i+3500] for i in range(0, len(article), 3500)]
-            for part in parts[:-1]:
-                await callback.message.answer(part)
-            await callback.message.answer(f"{parts[-1]}\n\nВыберите действие:", reply_markup=confirm_edit_kb())
-        else:
-            await callback.message.edit_text(
-                f"📄 <b>Новая статья:</b>\n\n{article}\n\nВыберите действие:",
-                parse_mode="HTML",
-                reply_markup=confirm_edit_kb()
-            )
-    except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=back_to_menu_kb())
-    
-    await callback.answer()
-
-@router.callback_query(SEOArticleStates.waiting_article_confirm, F.data == "edit")
-async def edit_article(callback: CallbackQuery, state: FSMContext):
-    """Редактирование статьи"""
-    await callback.message.edit_text(
-        "✏️ Редактирование длинных статей через бот неудобно.\n\n"
-        "Рекомендую:\n1. Скачать статью (нажмите 'Подтвердить')\n2. Отредактировать в текстовом редакторе\n\n"
-        "Или нажмите 'Сгенерировать заново' для новой версии.",
-        reply_markup=confirm_edit_kb()
-    )
-    await callback.answer()
+        await state.clear()

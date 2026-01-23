@@ -2,10 +2,9 @@ import aiohttp
 from typing import Optional, Literal
 from config import config
 
-ModelType = Literal["sora-2-text-to-video", "sora-2-image-to-video", "veo3", "veo3_fast"]
-AspectRatio = Literal["16:9", "9:16", "landscape", "portrait"]
-
 class KieAIService:
+    """Сервис для работы с Sora2 и Veo3 через kie.ai"""
+    
     def __init__(self):
         self.api_key = config.KIEAI_API_KEY
         self.base_url = config.KIEAI_BASE_URL
@@ -32,7 +31,7 @@ class KieAIService:
         if not self.is_available():
             raise RuntimeError("Kie.ai API недоступен")
         
-        model = "sora-2-image-to-video" if mode == "image" else "sora-2-text-to-video"
+        model = "sora-2-image-to-video" if mode == "image" and image_urls else "sora-2-text-to-video"
         
         payload = {
             "model": model,
@@ -80,11 +79,9 @@ class KieAIService:
         
         if image_urls:
             payload["imageUrls"] = image_urls
-            if not generation_type:
-                generation_type = "FIRST_AND_LAST_FRAMES_2_VIDEO"
+            generation_type = generation_type or "FIRST_AND_LAST_FRAMES_2_VIDEO"
         else:
-            if not generation_type:
-                generation_type = "TEXT_2_VIDEO"
+            generation_type = generation_type or "TEXT_2_VIDEO"
         
         payload["generationType"] = generation_type
         
@@ -100,7 +97,7 @@ class KieAIService:
                 return await resp.json()
     
     async def get_task_status(self, task_id: str) -> dict:
-        """Проверяет статус задачи Sora2 и других моделей (кроме Veo)"""
+        """Статус задачи Sora2 (unified endpoint)"""
         if not self.is_available():
             raise RuntimeError("Kie.ai API недоступен")
         
@@ -113,12 +110,11 @@ class KieAIService:
                 return await resp.json()
     
     async def get_veo_status(self, task_id: str) -> dict:
-        """Проверяет статус Veo3 задачи - ИСПРАВЛЕННЫЙ endpoint"""
+        """Статус задачи Veo3"""
         if not self.is_available():
             raise RuntimeError("Kie.ai API недоступен")
         
         async with aiohttp.ClientSession() as session:
-            # Правильный endpoint: /api/v1/veo/record-info
             async with session.get(
                 f"{self.base_url}/api/v1/veo/record-info",
                 headers=self._headers(),
@@ -126,19 +122,24 @@ class KieAIService:
             ) as resp:
                 return await resp.json()
     
-    async def extend_veo_video(
+    async def generate_nano_banana_image(
         self,
-        task_id: str,
         prompt: str,
+        aspect_ratio: str = "1:1",
+        output_format: str = "png",
         callback_url: Optional[str] = None
     ) -> dict:
-        """Продление Veo3 видео"""
+        """Генерация изображения через Google Nano Banana"""
         if not self.is_available():
             raise RuntimeError("Kie.ai API недоступен")
         
         payload = {
-            "taskId": task_id,
-            "prompt": prompt
+            "model": "google/nano-banana",
+            "input": {
+                "prompt": prompt,
+                "output_format": output_format,
+                "image_size": aspect_ratio
+            }
         }
         
         if callback_url:
@@ -146,7 +147,7 @@ class KieAIService:
         
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{self.base_url}/api/v1/veo/extend",
+                f"{self.base_url}/api/v1/jobs/createTask",
                 headers=self._headers(),
                 json=payload
             ) as resp:

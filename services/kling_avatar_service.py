@@ -1,19 +1,18 @@
 import aiohttp
 import asyncio
 import json
-from typing import Optional, Literal
+from typing import Optional
 from dataclasses import dataclass
 from config import config
 
 @dataclass
 class AvatarTask:
-    """Результат создания задачи аватара"""
     task_id: str
     status: str
     error: Optional[str] = None
 
 class KlingAvatarService:
-    """Сервис для работы с Kling AI Avatar через kie.ai"""
+    """Сервис для работы с Kling AI Avatar Pro через kie.ai"""
     
     def __init__(self):
         self.api_key = config.KIEAI_API_KEY
@@ -28,125 +27,34 @@ class KlingAvatarService:
             "Content-Type": "application/json"
         }
     
-    async def generate_avatar_image(
-        self,
-        prompt: str,
-        style: str = "photorealistic portrait",
-        aspect_ratio: str = "1:1",
-        callback_url: Optional[str] = None
-    ) -> dict:
-        """
-        Генерирует фото-аватар через Nano Banana Pro
-        
-        Args:
-            prompt: Описание аватара
-            style: Стиль изображения
-            aspect_ratio: Соотношение сторон
-            callback_url: URL для колбэка
-        
-        Returns:
-            dict с task_id или ошибкой
-        """
-        if not self.is_available():
-            raise RuntimeError("Kie.ai API недоступен")
-        
-        full_prompt = f"{style}, {prompt}, high quality, professional lighting, clean background"
-        
-        payload = {
-            "model": "nano-banana-pro",
-            "input": {
-                "prompt": full_prompt,
-                "image_input": [],
-                "aspect_ratio": aspect_ratio,
-                "resolution": "1K",
-                "output_format": "png"
-            }
-        }
-        
-        if callback_url:
-            payload["callBackUrl"] = callback_url
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{self.base_url}/api/v1/jobs/createTask",
-                headers=self._headers(),
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                return await resp.json()
-    
     async def create_avatar_video(
         self,
-        source_video_url: str,
-        avatar_image_url: str,
-        mode: Literal["audio", "video"] = "audio",
-        callback_url: Optional[str] = None
-    ) -> dict:
-        """
-        Создаёт видео с AI-аватаром через Kling-2.6
-        Синхронизирует губы аватара с аудио из исходного видео
-        
-        Args:
-            source_video_url: URL видео с записью голоса (источник аудио)
-            avatar_image_url: URL фото аватара
-            mode: Режим - audio (только аудио) или video (видео + аудио)
-            callback_url: URL для колбэка
-        
-        Returns:
-            dict с task_id или ошибкой
-        """
-        if not self.is_available():
-            raise RuntimeError("Kie.ai API недоступен")
-        
-        payload = {
-            "model": "kling-2.6/image-to-video",
-            "input": {
-                "image_url": avatar_image_url,
-                "video_url": source_video_url,
-                "mode": mode,
-                "duration": "auto"
-            }
-        }
-        
-        if callback_url:
-            payload["callBackUrl"] = callback_url
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{self.base_url}/api/v1/jobs/createTask",
-                headers=self._headers(),
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=60)
-            ) as resp:
-                return await resp.json()
-    
-    async def create_lip_sync_video(
-        self,
-        avatar_image_url: str,
+        image_url: str,
         audio_url: str,
+        prompt: str = "",
         callback_url: Optional[str] = None
     ) -> dict:
         """
-        Создаёт видео с lip-sync по аудио
-        Альтернативный метод если нужно передать только аудио
+        Создаёт видео с AI-аватаром через Kling AI Avatar Pro
         
         Args:
-            avatar_image_url: URL фото аватара
-            audio_url: URL аудиофайла
+            image_url: URL фото аватара (jpeg/png/webp, до 10MB)
+            audio_url: URL аудиофайла (mp3/wav/aac/ogg, до 10MB)
+            prompt: Дополнительный промпт (до 5000 символов)
             callback_url: URL для колбэка
         
         Returns:
-            dict с task_id или ошибкой
+            dict с taskId или ошибкой
         """
         if not self.is_available():
             raise RuntimeError("Kie.ai API недоступен")
         
         payload = {
-            "model": "kling-2.6/image-to-video",
+            "model": "kling/ai-avatar-pro",
             "input": {
-                "image_url": avatar_image_url,
+                "image_url": image_url,
                 "audio_url": audio_url,
-                "mode": "audio"
+                "prompt": prompt or ""
             }
         }
         
@@ -160,13 +68,15 @@ class KlingAvatarService:
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=60)
             ) as resp:
-                return await resp.json()
+                result = await resp.json()
+                return result
     
     async def get_task_status(self, task_id: str) -> dict:
-        """Проверяет статус задачи"""
+        """Проверяет статус задачи через unified endpoint"""
         if not self.is_available():
             raise RuntimeError("Kie.ai API недоступен")
         
+        # Используем Get Task Details endpoint
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 f"{self.base_url}/api/v1/jobs/recordInfo",
@@ -178,20 +88,10 @@ class KlingAvatarService:
     async def wait_for_result(
         self,
         task_id: str,
-        timeout: int = 600,
-        poll_interval: int = 10
+        timeout: int = 900,  # 15 минут для аватара
+        poll_interval: int = 15
     ) -> Optional[str]:
-        """
-        Ожидает завершения задачи и возвращает URL результата
-        
-        Args:
-            task_id: ID задачи
-            timeout: Максимальное время ожидания в секундах
-            poll_interval: Интервал проверки в секундах
-        
-        Returns:
-            URL готового видео/изображения или None
-        """
+        """Ожидает завершения и возвращает URL результата"""
         elapsed = 0
         
         while elapsed < timeout:
@@ -206,7 +106,6 @@ class KlingAvatarService:
             state = data.get("state", "").lower()
             
             if state in ("success", "completed", "done"):
-                # Пытаемся найти URL результата
                 result_json = data.get("resultJson", {})
                 if isinstance(result_json, str):
                     try:
@@ -218,12 +117,7 @@ class KlingAvatarService:
                 if urls:
                     return urls[0]
                 
-                # Альтернативные поля
-                return (
-                    data.get("videoUrl") or 
-                    data.get("imageUrl") or 
-                    data.get("url")
-                )
+                return data.get("videoUrl") or data.get("url")
             
             elif state in ("failed", "error"):
                 return None
@@ -232,21 +126,5 @@ class KlingAvatarService:
             elapsed += poll_interval
         
         return None
-    
-    async def upload_file_and_get_url(
-        self,
-        file_content: bytes,
-        filename: str
-    ) -> Optional[str]:
-        """
-        Загружает файл и получает публичный URL
-        Примечание: Kie.ai может требовать публичные URL,
-        поэтому файлы нужно загружать на доступный сервер
-        
-        В текущей реализации используем Telegram file URL
-        """
-        # Это заглушка - в реальности нужен сервер для хостинга файлов
-        # или использовать Google Drive с публичными ссылками
-        pass
 
 kling_avatar_service = KlingAvatarService()

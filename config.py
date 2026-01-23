@@ -13,18 +13,14 @@ class Config:
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
     
-    # Kie.ai (Sora2, Veo3, Kling, Nano Banana Pro)
+    # Kie.ai (Sora2, Veo3, Kling, Nano Banana)
     KIEAI_API_KEY: str = os.getenv("KIEAI_API_KEY", "")
     KIEAI_BASE_URL: str = "https://api.kie.ai"
     
-    # Google API (OAuth)
-    GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
-    GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    # Google Service Account (JSON file path)
+    GOOGLE_SERVICE_ACCOUNT_FILE: str = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "service_account.json")
     GOOGLE_SPREADSHEET_ID: str = os.getenv("GOOGLE_SPREADSHEET_ID", "")
     GOOGLE_DRIVE_FOLDER_ID: str = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
-    
-    # Callback URL для вебхуков (опционально)
-    CALLBACK_BASE_URL: Optional[str] = os.getenv("CALLBACK_BASE_URL")
     
     # Пути
     KNOWLEDGE_BASE_DIR: str = os.getenv("KNOWLEDGE_BASE_DIR", "knowledge_base")
@@ -36,7 +32,7 @@ class Config:
             "telegram": bool(self.BOT_TOKEN),
             "openai": bool(self.OPENAI_API_KEY),
             "kieai": bool(self.KIEAI_API_KEY),
-            "google": bool(self.GOOGLE_CLIENT_ID and self.GOOGLE_CLIENT_SECRET),
+            "google": bool(self.GOOGLE_SERVICE_ACCOUNT_FILE and os.path.exists(self.GOOGLE_SERVICE_ACCOUNT_FILE)),
         }
     
     def get_missing_keys(self) -> list[str]:

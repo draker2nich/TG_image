@@ -2,3 +2,5 @@
 __pycache__/
 *.pyc
 *.pyo
+# .gitignore
+service_account.json

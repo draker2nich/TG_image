@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import tempfile
 from datetime import datetime
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
@@ -11,63 +13,48 @@ from states.generation_states import AvatarVideoStates
 from keyboards.menus import cancel_kb, confirm_edit_kb, back_to_menu_kb
 from services.openai_service import openai_service
 from services.kling_avatar_service import kling_avatar_service
+from services.kieai_service import kieai_service
 from services.task_tracker import task_tracker, VideoTask
-from config import config
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 def avatar_source_kb():
-    """Выбор источника аватара"""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(
-        text="📤 Загрузить своё фото",
-        callback_data="avatar:source:upload"
-    ))
-    builder.row(InlineKeyboardButton(
-        text="🎨 Сгенерировать аватар",
-        callback_data="avatar:source:generate"
-    ))
+    builder.row(InlineKeyboardButton(text="📤 Загрузить своё фото", callback_data="avatar:source:upload"))
+    builder.row(InlineKeyboardButton(text="🎨 Сгенерировать аватар", callback_data="avatar:source:generate"))
     builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
     return builder.as_markup()
 
 def avatar_style_kb():
-    """Выбор стиля генерируемого аватара"""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(
-        text="👨‍💼 Деловой портрет",
-        callback_data="avatar:style:business"
-    ))
-    builder.row(InlineKeyboardButton(
-        text="😊 Casual/повседневный",
-        callback_data="avatar:style:casual"
-    ))
-    builder.row(InlineKeyboardButton(
-        text="🎨 Креативный/артистичный",
-        callback_data="avatar:style:creative"
-    ))
-    builder.row(InlineKeyboardButton(
-        text="🤖 Футуристичный",
-        callback_data="avatar:style:futuristic"
-    ))
+    builder.row(InlineKeyboardButton(text="👨‍💼 Деловой портрет", callback_data="avatar:style:business"))
+    builder.row(InlineKeyboardButton(text="😊 Casual/повседневный", callback_data="avatar:style:casual"))
+    builder.row(InlineKeyboardButton(text="🎨 Креативный", callback_data="avatar:style:creative"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="avatar:back_source"))
     builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
     return builder.as_markup()
 
+def confirm_avatar_kb():
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="✅ Использовать", callback_data="avatar:confirm_image"))
+    builder.row(InlineKeyboardButton(text="🔄 Сгенерировать другой", callback_data="avatar:regenerate_image"))
+    builder.row(InlineKeyboardButton(text="📤 Загрузить своё фото", callback_data="avatar:source:upload"))
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
+    return builder.as_markup()
+
 AVATAR_STYLES = {
-    "business": "professional business portrait, corporate headshot, neutral background, confident expression, formal attire",
-    "casual": "friendly casual portrait, natural lighting, warm smile, relaxed pose, soft background",
-    "creative": "artistic portrait, creative lighting, unique composition, expressive, colorful accents",
-    "futuristic": "futuristic portrait, cyberpunk aesthetic, neon accents, tech-inspired, modern"
+    "business": "professional business portrait, corporate headshot, neutral background, confident",
+    "casual": "friendly casual portrait, natural lighting, warm smile, soft background",
+    "creative": "artistic portrait, creative lighting, unique composition, colorful"
 }
 
 @router.callback_query(F.data == "menu:avatar")
 async def start_avatar_flow(callback: CallbackQuery, state: FSMContext):
-    """Начало создания видео с аватаром (Kling)"""
+    """Начало создания видео с аватаром"""
     if not kling_avatar_service.is_available():
         await callback.message.edit_text(
-            "⚠️ Kie.ai API не настроен.\n"
-            "Добавьте KIEAI_API_KEY в переменные окружения.",
+            "⚠️ Kie.ai API не настроен.\nДобавьте KIEAI_API_KEY.",
             reply_markup=back_to_menu_kb()
         )
         await callback.answer()
@@ -75,8 +62,7 @@ async def start_avatar_flow(callback: CallbackQuery, state: FSMContext):
     
     if not openai_service.is_available():
         await callback.message.edit_text(
-            "⚠️ OpenAI API не настроен.\n"
-            "Добавьте OPENAI_API_KEY для генерации сценариев.",
+            "⚠️ OpenAI API не настроен.\nДобавьте OPENAI_API_KEY.",
             reply_markup=back_to_menu_kb()
         )
         await callback.answer()
@@ -85,10 +71,10 @@ async def start_avatar_flow(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AvatarVideoStates.waiting_topic)
     await callback.message.edit_text(
         "🎭 <b>Создание видео с AI-аватаром (Kling)</b>\n\n"
-        "Процесс создания:\n"
+        "Процесс:\n"
         "1️⃣ Получите сценарий на основе базы знаний\n"
-        "2️⃣ Запишите видео по сценарию (можно на телефон)\n"
-        "3️⃣ Загрузите видео в бот\n"
+        "2️⃣ Запишите аудио/видео по сценарию\n"
+        "3️⃣ Загрузите аудио в бот\n"
         "4️⃣ Загрузите или сгенерируйте фото-аватар\n"
         "5️⃣ Получите готовое видео с lip-sync\n\n"
         "📝 Введите тему для сценария:",
@@ -99,10 +85,10 @@ async def start_avatar_flow(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AvatarVideoStates.waiting_topic)
 async def process_topic(message: Message, state: FSMContext):
-    """Обработка темы и генерация сценария"""
+    """Генерация сценария"""
     topic = message.text.strip()
     
-    await message.answer("⏳ Генерирую сценарий на основе базы знаний...")
+    await message.answer("⏳ Генерирую сценарий...")
     
     try:
         script = await openai_service.generate_avatar_script(topic)
@@ -111,44 +97,34 @@ async def process_topic(message: Message, state: FSMContext):
         
         await message.answer(
             f"📝 <b>Сценарий готов:</b>\n\n{script}\n\n"
-            "Прочитайте сценарий вслух на камеру.\n"
+            "Прочитайте сценарий вслух и запишите аудио.\n"
             "Выберите действие:",
             parse_mode="HTML",
             reply_markup=confirm_edit_kb()
         )
     except Exception as e:
-        await message.answer(
-            f"❌ Ошибка генерации: {e}",
-            reply_markup=back_to_menu_kb()
-        )
+        await message.answer(f"❌ Ошибка: {e}", reply_markup=back_to_menu_kb())
 
 @router.callback_query(AvatarVideoStates.waiting_script_confirm, F.data == "edit")
 async def edit_script(callback: CallbackQuery, state: FSMContext):
-    """Переход к редактированию сценария"""
     await state.set_state(AvatarVideoStates.waiting_script_edit)
-    await callback.message.edit_text(
-        "✏️ Введите отредактированный сценарий:",
-        reply_markup=cancel_kb()
-    )
+    await callback.message.edit_text("✏️ Введите отредактированный сценарий:", reply_markup=cancel_kb())
     await callback.answer()
 
 @router.message(AvatarVideoStates.waiting_script_edit)
 async def process_edited_script(message: Message, state: FSMContext):
-    """Сохранение отредактированного сценария"""
     script = message.text.strip()
     await state.update_data(script=script)
     await state.set_state(AvatarVideoStates.waiting_script_confirm)
     
     await message.answer(
-        f"📝 <b>Обновлённый сценарий:</b>\n\n{script}\n\n"
-        "Выберите действие:",
+        f"📝 <b>Обновлённый сценарий:</b>\n\n{script}\n\nВыберите действие:",
         parse_mode="HTML",
         reply_markup=confirm_edit_kb()
     )
 
 @router.callback_query(AvatarVideoStates.waiting_script_confirm, F.data == "regenerate")
 async def regenerate_script(callback: CallbackQuery, state: FSMContext):
-    """Повторная генерация сценария"""
     data = await state.get_data()
     topic = data.get("topic", "")
     
@@ -159,109 +135,94 @@ async def regenerate_script(callback: CallbackQuery, state: FSMContext):
         await state.update_data(script=script)
         
         await callback.message.edit_text(
-            f"📝 <b>Новый сценарий:</b>\n\n{script}\n\n"
-            "Выберите действие:",
+            f"📝 <b>Новый сценарий:</b>\n\n{script}\n\nВыберите действие:",
             parse_mode="HTML",
             reply_markup=confirm_edit_kb()
         )
     except Exception as e:
-        await callback.message.edit_text(
-            f"❌ Ошибка: {e}",
-            reply_markup=back_to_menu_kb()
-        )
-    
+        await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=back_to_menu_kb())
     await callback.answer()
 
 @router.callback_query(AvatarVideoStates.waiting_script_confirm, F.data == "confirm")
 async def confirm_script(callback: CallbackQuery, state: FSMContext):
-    """Подтверждение сценария — запрос видео"""
-    data = await state.get_data()
-    script = data.get("script", "")
-    
+    """Подтверждение — запрос аудио"""
     await state.set_state(AvatarVideoStates.waiting_video)
     
-    # Сохраняем сценарий для отображения
-    script_preview = script[:500] + "..." if len(script) > 500 else script
-    
     await callback.message.edit_text(
-        f"✅ <b>Сценарий подтверждён!</b>\n\n"
-        f"<i>{script_preview}</i>\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "📹 <b>Теперь запишите видео:</b>\n\n"
-        "1. Прочитайте сценарий на камеру\n"
-        "2. Говорите чётко и не слишком быстро\n"
-        "3. Хорошее освещение и звук важны\n"
-        "4. Длительность: желательно до 2 минут\n\n"
-        "📤 <b>Отправьте видео сюда:</b>",
+        "✅ <b>Сценарий подтверждён!</b>\n\n"
+        "🎤 <b>Теперь запишите аудио:</b>\n\n"
+        "• Прочитайте сценарий вслух\n"
+        "• Говорите чётко\n"
+        "• Хорошее качество звука важно\n\n"
+        "📤 <b>Отправьте аудио или голосовое сообщение:</b>",
         parse_mode="HTML",
         reply_markup=cancel_kb()
     )
     await callback.answer()
 
-@router.message(AvatarVideoStates.waiting_video, F.video)
-async def process_video_upload(message: Message, state: FSMContext, bot: Bot):
-    """Получение видео от пользователя"""
-    video = message.video
+@router.message(AvatarVideoStates.waiting_video, F.voice)
+async def process_voice(message: Message, state: FSMContext, bot: Bot):
+    """Получение голосового сообщения"""
+    voice = message.voice
     
-    # Проверка размера (Telegram ограничивает до 20MB для ботов)
-    if video.file_size and video.file_size > 50 * 1024 * 1024:
-        await message.answer(
-            "⚠️ Видео слишком большое (макс. 50MB).\n"
-            "Сожмите видео и попробуйте снова.",
-            reply_markup=cancel_kb()
-        )
-        return
-    
-    await message.answer("⏳ Загружаю видео...")
+    await message.answer("⏳ Загружаю аудио...")
     
     try:
-        # Получаем файл
-        file = await bot.get_file(video.file_id)
-        video_url = f"https://api.telegram.org/file/bot{bot.token}/{file.file_path}"
+        file = await bot.get_file(voice.file_id)
+        audio_url = f"https://api.telegram.org/file/bot{bot.token}/{file.file_path}"
         
-        await state.update_data(
-            source_video_url=video_url,
-            source_video_file_id=video.file_id,
-            video_duration=video.duration
-        )
-        
+        await state.update_data(audio_url=audio_url, audio_duration=voice.duration)
         await state.set_state(AvatarVideoStates.selecting_avatar_source)
         
         await message.answer(
-            "✅ <b>Видео получено!</b>\n\n"
-            f"⏱ Длительность: {video.duration} сек\n\n"
-            "Теперь выберите аватар для видео:",
+            f"✅ <b>Аудио получено!</b>\n⏱ Длительность: {voice.duration} сек\n\n"
+            "Теперь выберите аватар:",
             parse_mode="HTML",
             reply_markup=avatar_source_kb()
         )
     except Exception as e:
-        logger.error(f"Error processing video: {e}")
+        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
+
+@router.message(AvatarVideoStates.waiting_video, F.audio)
+async def process_audio(message: Message, state: FSMContext, bot: Bot):
+    """Получение аудиофайла"""
+    audio = message.audio
+    
+    await message.answer("⏳ Загружаю аудио...")
+    
+    try:
+        file = await bot.get_file(audio.file_id)
+        audio_url = f"https://api.telegram.org/file/bot{bot.token}/{file.file_path}"
+        
+        await state.update_data(audio_url=audio_url, audio_duration=audio.duration)
+        await state.set_state(AvatarVideoStates.selecting_avatar_source)
+        
         await message.answer(
-            f"❌ Ошибка загрузки видео: {e}",
-            reply_markup=cancel_kb()
+            f"✅ <b>Аудио получено!</b>\n⏱ Длительность: {audio.duration} сек\n\n"
+            "Теперь выберите аватар:",
+            parse_mode="HTML",
+            reply_markup=avatar_source_kb()
         )
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
 
 @router.message(AvatarVideoStates.waiting_video)
-async def process_video_invalid(message: Message):
-    """Некорректный ввод вместо видео"""
+async def process_audio_invalid(message: Message):
     await message.answer(
-        "⚠️ Пожалуйста, отправьте видео.\n\n"
-        "Если видео большое, отправьте его как файл (без сжатия).",
+        "⚠️ Отправьте аудио или голосовое сообщение.",
         reply_markup=cancel_kb()
     )
 
 @router.callback_query(AvatarVideoStates.selecting_avatar_source, F.data == "avatar:source:upload")
 async def select_upload_avatar(callback: CallbackQuery, state: FSMContext):
-    """Выбор загрузки своего фото"""
     await state.set_state(AvatarVideoStates.waiting_avatar_image)
     await callback.message.edit_text(
         "📤 <b>Загрузите фото аватара</b>\n\n"
-        "Требования к фото:\n"
-        "• Лицо должно быть хорошо видно\n"
+        "Требования:\n"
+        "• Лицо хорошо видно\n"
         "• Прямой взгляд в камеру\n"
-        "• Нейтральное выражение лица\n"
         "• Хорошее освещение\n"
-        "• Минимум 512x512 пикселей\n\n"
+        "• Форматы: JPEG, PNG, WebP\n\n"
         "📷 Отправьте фото:",
         parse_mode="HTML",
         reply_markup=cancel_kb()
@@ -270,11 +231,9 @@ async def select_upload_avatar(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(AvatarVideoStates.selecting_avatar_source, F.data == "avatar:source:generate")
 async def select_generate_avatar(callback: CallbackQuery, state: FSMContext):
-    """Выбор генерации аватара"""
     await state.set_state(AvatarVideoStates.selecting_avatar_style)
     await callback.message.edit_text(
-        "🎨 <b>Генерация аватара</b>\n\n"
-        "Выберите стиль аватара:",
+        "🎨 <b>Генерация аватара</b>\n\nВыберите стиль:",
         parse_mode="HTML",
         reply_markup=avatar_style_kb()
     )
@@ -282,37 +241,23 @@ async def select_generate_avatar(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(AvatarVideoStates.selecting_avatar_style, F.data == "avatar:back_source")
 async def back_to_avatar_source(callback: CallbackQuery, state: FSMContext):
-    """Возврат к выбору источника аватара"""
     await state.set_state(AvatarVideoStates.selecting_avatar_source)
-    await callback.message.edit_text(
-        "Выберите аватар для видео:",
-        reply_markup=avatar_source_kb()
-    )
+    await callback.message.edit_text("Выберите аватар:", reply_markup=avatar_source_kb())
     await callback.answer()
 
 @router.callback_query(AvatarVideoStates.selecting_avatar_style, F.data.startswith("avatar:style:"))
 async def select_avatar_style(callback: CallbackQuery, state: FSMContext):
-    """Выбор стиля и запрос описания"""
     style_key = callback.data.split(":")[2]
     style_prompt = AVATAR_STYLES.get(style_key, AVATAR_STYLES["business"])
     
     await state.update_data(avatar_style=style_key, avatar_style_prompt=style_prompt)
     await state.set_state(AvatarVideoStates.waiting_avatar_description)
     
-    style_names = {
-        "business": "Деловой портрет",
-        "casual": "Casual/повседневный",
-        "creative": "Креативный",
-        "futuristic": "Футуристичный"
-    }
-    
     await callback.message.edit_text(
-        f"🎨 <b>Стиль: {style_names.get(style_key, style_key)}</b>\n\n"
-        "Опишите желаемый аватар:\n\n"
+        "🎨 <b>Опишите желаемый аватар:</b>\n\n"
         "💡 Примеры:\n"
-        "• <i>Мужчина 30 лет, короткие тёмные волосы, улыбается</i>\n"
-        "• <i>Женщина азиатской внешности, длинные чёрные волосы</i>\n"
-        "• <i>Молодой человек с бородой в очках</i>\n\n"
+        "• <i>Мужчина 30 лет, короткие тёмные волосы</i>\n"
+        "• <i>Женщина с длинными светлыми волосами</i>\n\n"
         "✏️ Введите описание:",
         parse_mode="HTML",
         reply_markup=cancel_kb()
@@ -321,18 +266,18 @@ async def select_avatar_style(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AvatarVideoStates.waiting_avatar_description)
 async def process_avatar_description(message: Message, state: FSMContext):
-    """Генерация аватара по описанию"""
+    """Генерация аватара через Nano Banana"""
     description = message.text.strip()
     data = await state.get_data()
     style_prompt = data.get("avatar_style_prompt", "")
     
-    await message.answer("🎨 Генерирую аватар... Это может занять 1-2 минуты.")
+    await message.answer("🎨 Генерирую аватар... (1-2 минуты)")
     
     try:
-        # Запускаем генерацию
-        result = await kling_avatar_service.generate_avatar_image(
-            prompt=description,
-            style=style_prompt,
+        full_prompt = f"{style_prompt}, {description}, portrait photo, high quality"
+        
+        result = await kieai_service.generate_nano_banana_image(
+            prompt=full_prompt,
             aspect_ratio="1:1"
         )
         
@@ -343,14 +288,10 @@ async def process_avatar_description(message: Message, state: FSMContext):
         if not task_id:
             raise Exception("Не получен taskId")
         
-        await message.answer("⏳ Ожидаю завершения генерации...")
+        await message.answer("⏳ Ожидаю результат...")
         
         # Ждём результат
-        avatar_url = await kling_avatar_service.wait_for_result(
-            task_id, 
-            timeout=180, 
-            poll_interval=5
-        )
+        avatar_url = await wait_for_image_result(task_id)
         
         if not avatar_url:
             raise Exception("Не удалось получить изображение")
@@ -358,10 +299,9 @@ async def process_avatar_description(message: Message, state: FSMContext):
         await state.update_data(avatar_image_url=avatar_url)
         await state.set_state(AvatarVideoStates.confirming_avatar)
         
-        # Показываем превью
         await message.answer_photo(
             photo=avatar_url,
-            caption="✅ <b>Аватар готов!</b>\n\nИспользовать этот аватар?",
+            caption="✅ <b>Аватар готов!</b>\n\nИспользовать?",
             parse_mode="HTML",
             reply_markup=confirm_avatar_kb()
         )
@@ -369,34 +309,51 @@ async def process_avatar_description(message: Message, state: FSMContext):
     except Exception as e:
         logger.error(f"Avatar generation error: {e}")
         await message.answer(
-            f"❌ Ошибка генерации аватара: {e}\n\n"
-            "Попробуйте другое описание или загрузите своё фото.",
+            f"❌ Ошибка: {e}\n\nПопробуйте другое описание или загрузите фото.",
             reply_markup=avatar_source_kb()
         )
         await state.set_state(AvatarVideoStates.selecting_avatar_source)
 
-def confirm_avatar_kb():
-    """Подтверждение аватара"""
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(
-        text="✅ Использовать",
-        callback_data="avatar:confirm_image"
-    ))
-    builder.row(InlineKeyboardButton(
-        text="🔄 Сгенерировать другой",
-        callback_data="avatar:regenerate_image"
-    ))
-    builder.row(InlineKeyboardButton(
-        text="📤 Загрузить своё фото",
-        callback_data="avatar:source:upload"
-    ))
-    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
-    return builder.as_markup()
+async def wait_for_image_result(task_id: str, timeout: int = 180) -> str:
+    """Ожидание результата генерации изображения"""
+    import json
+    elapsed = 0
+    
+    while elapsed < timeout:
+        result = await kieai_service.get_task_status(task_id)
+        
+        if result.get("code") != 200:
+            await asyncio.sleep(5)
+            elapsed += 5
+            continue
+        
+        data = result.get("data", {})
+        state = data.get("state", "").lower()
+        
+        if state in ("success", "completed", "done"):
+            result_json = data.get("resultJson", {})
+            if isinstance(result_json, str):
+                try:
+                    result_json = json.loads(result_json)
+                except:
+                    result_json = {}
+            
+            urls = result_json.get("resultUrls", [])
+            if urls:
+                return urls[0]
+            return data.get("imageUrl") or data.get("url")
+        
+        elif state in ("failed", "error"):
+            return None
+        
+        await asyncio.sleep(5)
+        elapsed += 5
+    
+    return None
 
 @router.message(AvatarVideoStates.waiting_avatar_image, F.photo)
 async def process_avatar_photo(message: Message, state: FSMContext, bot: Bot):
-    """Получение фото аватара от пользователя"""
-    photo = message.photo[-1]  # Максимальное разрешение
+    photo = message.photo[-1]
     
     await message.answer("⏳ Загружаю фото...")
     
@@ -409,53 +366,48 @@ async def process_avatar_photo(message: Message, state: FSMContext, bot: Bot):
         
         await message.answer_photo(
             photo=avatar_url,
-            caption="✅ <b>Фото получено!</b>\n\nИспользовать это фото как аватар?",
+            caption="✅ <b>Фото получено!</b>\n\nИспользовать как аватар?",
             parse_mode="HTML",
             reply_markup=confirm_avatar_kb()
         )
     except Exception as e:
-        await message.answer(
-            f"❌ Ошибка загрузки: {e}",
-            reply_markup=cancel_kb()
-        )
+        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
 
 @router.message(AvatarVideoStates.waiting_avatar_image)
 async def process_avatar_invalid(message: Message):
-    """Некорректный ввод вместо фото"""
-    await message.answer(
-        "⚠️ Пожалуйста, отправьте фотографию.",
-        reply_markup=cancel_kb()
-    )
+    await message.answer("⚠️ Отправьте фотографию.", reply_markup=cancel_kb())
 
 @router.callback_query(AvatarVideoStates.confirming_avatar, F.data == "avatar:confirm_image")
 async def confirm_avatar_and_generate(callback: CallbackQuery, state: FSMContext):
-    """Подтверждение аватара и запуск генерации видео"""
+    """Запуск генерации видео"""
     data = await state.get_data()
     
-    source_video_url = data.get("source_video_url")
-    avatar_image_url = data.get("avatar_image_url")
+    audio_url = data.get("audio_url")
+    avatar_url = data.get("avatar_image_url")
     
-    if not source_video_url or not avatar_image_url:
-        await callback.message.edit_text(
-            "❌ Ошибка: не найдены необходимые данные.\n"
-            "Начните процесс заново.",
+    if not audio_url or not avatar_url:
+        # Отвечаем новым сообщением, т.к. предыдущее - фото
+        await callback.message.answer(
+            "❌ Ошибка: не найдены данные. Начните заново.",
             reply_markup=back_to_menu_kb()
         )
         await callback.answer()
         return
     
     await state.set_state(AvatarVideoStates.generating)
-    await callback.message.edit_text(
-        "🎬 <b>Запускаю генерацию видео с аватаром...</b>\n\n"
+    # Отправляем новое сообщение вместо edit (предыдущее - фото)
+    await callback.message.answer(
+        "🎬 <b>Запускаю генерацию видео...</b>\n\n"
         "Это может занять 5-15 минут.\n"
-        "Вы получите уведомление, когда видео будет готово."
+        "Вы получите уведомление.",
+        parse_mode="HTML"
     )
     
     try:
         result = await kling_avatar_service.create_avatar_video(
-            source_video_url=source_video_url,
-            avatar_image_url=avatar_image_url,
-            mode="audio"
+            image_url=avatar_url,
+            audio_url=audio_url,
+            prompt=data.get("topic", "")
         )
         
         if result.get("code") != 200:
@@ -476,34 +428,28 @@ async def confirm_avatar_and_generate(callback: CallbackQuery, state: FSMContext
         )
         task_tracker.add_task(video_task)
         
-        await callback.message.edit_text(
-            f"✅ <b>Генерация запущена!</b>\n\n"
-            f"🆔 Task ID: <code>{task_id}</code>\n\n"
-            f"⏳ Ожидаемое время: 5-15 минут\n"
-            f"📩 Видео придёт автоматически!\n\n"
-            f"Проверить статус: /check {task_id}",
+
+        await callback.message.answer(
+            "🎬 <b>Запускаю генерацию видео...</b>\n\n"
+            "Это может занять 5-15 минут.\n"
+            "Вы получите уведомление.",
             parse_mode="HTML",
             reply_markup=back_to_menu_kb()
         )
         await state.clear()
         
     except Exception as e:
-        logger.error(f"Avatar video generation error: {e}")
-        await callback.message.edit_text(
-            f"❌ Ошибка запуска генерации: {e}",
-            reply_markup=back_to_menu_kb()
-        )
+        logger.error(f"Avatar video error: {e}")
+        await callback.message.answer(f"❌ Ошибка: {e}", reply_markup=back_to_menu_kb())
         await state.clear()
     
     await callback.answer()
 
 @router.callback_query(AvatarVideoStates.confirming_avatar, F.data == "avatar:regenerate_image")
 async def regenerate_avatar_image(callback: CallbackQuery, state: FSMContext):
-    """Перегенерация аватара"""
     await state.set_state(AvatarVideoStates.selecting_avatar_style)
     await callback.message.edit_text(
-        "🎨 <b>Генерация аватара</b>\n\n"
-        "Выберите стиль аватара:",
+        "🎨 <b>Генерация аватара</b>\n\nВыберите стиль:",
         parse_mode="HTML",
         reply_markup=avatar_style_kb()
     )
@@ -511,26 +457,10 @@ async def regenerate_avatar_image(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(AvatarVideoStates.confirming_avatar, F.data == "avatar:source:upload")
 async def switch_to_upload(callback: CallbackQuery, state: FSMContext):
-    """Переключение на загрузку своего фото"""
     await state.set_state(AvatarVideoStates.waiting_avatar_image)
     await callback.message.edit_text(
-        "📤 <b>Загрузите фото аватара</b>\n\n"
-        "Требования к фото:\n"
-        "• Лицо должно быть хорошо видно\n"
-        "• Прямой взгляд в камеру\n"
-        "• Нейтральное выражение лица\n"
-        "• Хорошее освещение\n\n"
-        "📷 Отправьте фото:",
+        "📤 <b>Загрузите фото аватара</b>\n\n📷 Отправьте фото:",
         parse_mode="HTML",
         reply_markup=cancel_kb()
     )
     await callback.answer()
-
-# Новое состояние для видео в states
-# Добавить в states/generation_states.py:
-# waiting_video = State()
-# selecting_avatar_source = State()
-# selecting_avatar_style = State()
-# waiting_avatar_description = State()
-# waiting_avatar_image = State()
-# confirming_avatar = State()
