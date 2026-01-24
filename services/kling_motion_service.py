@@ -6,13 +6,13 @@ from dataclasses import dataclass
 from config import config
 
 @dataclass
-class AvatarTask:
+class MotionTask:
     task_id: str
     status: str
     error: Optional[str] = None
 
-class KlingAvatarService:
-    """Сервис для работы с Kling AI Avatar Pro через kie.ai"""
+class KlingMotionService:
+    """Сервис для работы с Kling 2.6 Motion Control через kie.ai"""
     
     def __init__(self):
         self.api_key = config.KIEAI_API_KEY
@@ -27,20 +27,26 @@ class KlingAvatarService:
             "Content-Type": "application/json"
         }
     
-    async def create_avatar_video(
+    async def create_motion_video(
         self,
         image_url: str,
-        audio_url: str,
+        video_url: str,
         prompt: str = "",
+        character_orientation: str = "video",
+        mode: str = "720p",
         callback_url: Optional[str] = None
     ) -> dict:
         """
-        Создаёт видео с AI-аватаром через Kling AI Avatar Pro
+        Создаёт видео с Motion Control через Kling 2.6
         
         Args:
-            image_url: URL фото аватара (jpeg/png/webp, до 10MB)
-            audio_url: URL аудиофайла (mp3/wav/aac/ogg, до 10MB)
-            prompt: Дополнительный промпт (до 5000 символов)
+            image_url: URL фото аватара (jpeg/png/jpg, до 10MB, >300px, aspect 2:5 to 5:2)
+            video_url: URL видео с движениями (mp4/mov/mkv, до 100MB, 3-30 сек)
+            prompt: Описание желаемого результата (до 2500 символов)
+            character_orientation: 
+                - "image" — ориентация как на фото (макс 10 сек видео)
+                - "video" — ориентация как в видео (макс 30 сек видео)
+            mode: Разрешение — "720p" или "1080p"
             callback_url: URL для колбэка
         
         Returns:
@@ -50,13 +56,17 @@ class KlingAvatarService:
             raise RuntimeError("Kie.ai API недоступен")
         
         payload = {
-            "model": "kling/ai-avatar-pro",
+            "model": "kling-2.6/motion-control",
             "input": {
-                "image_url": image_url,
-                "audio_url": audio_url,
-                "prompt": prompt or ""
+                "input_urls": [image_url],
+                "video_urls": [video_url],
+                "character_orientation": character_orientation,
+                "mode": mode
             }
         }
+        
+        if prompt:
+            payload["input"]["prompt"] = prompt[:2500]
         
         if callback_url:
             payload["callBackUrl"] = callback_url
@@ -76,7 +86,6 @@ class KlingAvatarService:
         if not self.is_available():
             raise RuntimeError("Kie.ai API недоступен")
         
-        # Используем Get Task Details endpoint
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 f"{self.base_url}/api/v1/jobs/recordInfo",
@@ -88,7 +97,7 @@ class KlingAvatarService:
     async def wait_for_result(
         self,
         task_id: str,
-        timeout: int = 900,  # 15 минут для аватара
+        timeout: int = 900,  # 15 минут
         poll_interval: int = 15
     ) -> Optional[str]:
         """Ожидает завершения и возвращает URL результата"""
@@ -127,4 +136,4 @@ class KlingAvatarService:
         
         return None
 
-kling_avatar_service = KlingAvatarService()
+kling_motion_service = KlingMotionService()

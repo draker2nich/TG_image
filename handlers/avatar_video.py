@@ -12,7 +12,7 @@ from aiogram.types import InlineKeyboardButton
 from states.generation_states import AvatarVideoStates
 from keyboards.menus import cancel_kb, confirm_edit_kb, back_to_menu_kb
 from services.openai_service import openai_service
-from services.kling_avatar_service import kling_avatar_service
+from services.kling_motion_service import kling_motion_service
 from services.kieai_service import kieai_service
 from services.task_tracker import task_tracker, VideoTask
 from services.file_upload_service import file_upload_service
@@ -21,9 +21,9 @@ from services.subtitles_service import subtitles_service
 logger = logging.getLogger(__name__)
 router = Router()
 
-# Поддерживаемые форматы
-AUDIO_EXTENSIONS = {'.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac', '.wma'}
-VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v'}
+# Поддерживаемые форматы видео (согласно API)
+VIDEO_EXTENSIONS = {'.mp4', '.mov', '.mkv'}
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png'}
 
 def avatar_source_kb():
     builder = InlineKeyboardBuilder()
@@ -50,11 +50,28 @@ def confirm_avatar_kb():
     return builder.as_markup()
 
 def subtitles_confirm_kb():
-    """Подтверждение добавления субтитров (один стиль)"""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="✅ Да, добавить субтитры", callback_data="avatar:sub:yes"))
     builder.row(InlineKeyboardButton(text="❌ Без субтитров", callback_data="avatar:sub:no"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="avatar:back_avatar"))
+    return builder.as_markup()
+
+def video_quality_kb():
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="📺 720p (быстрее)", callback_data="avatar:quality:720p"),
+        InlineKeyboardButton(text="🎬 1080p (качество)", callback_data="avatar:quality:1080p")
+    )
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="avatar:back_subs"))
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
+    return builder.as_markup()
+
+def orientation_kb():
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="🖼 Как на фото (макс 10 сек)", callback_data="avatar:orient:image"))
+    builder.row(InlineKeyboardButton(text="🎬 Как в видео (макс 30 сек)", callback_data="avatar:orient:video"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="avatar:back_quality"))
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
     return builder.as_markup()
 
 AVATAR_STYLES = {
@@ -63,10 +80,12 @@ AVATAR_STYLES = {
     "creative": "artistic portrait, creative lighting, unique composition, colorful"
 }
 
+# ============ START FLOW ============
+
 @router.callback_query(F.data == "menu:avatar")
 async def start_avatar_flow(callback: CallbackQuery, state: FSMContext):
-    """Начало создания видео с аватаром"""
-    if not kling_avatar_service.is_available():
+    """Начало создания видео с Motion Control"""
+    if not kling_motion_service.is_available():
         await callback.message.edit_text(
             "⚠️ Kie.ai API не настроен.\nДобавьте KIEAI_API_KEY.",
             reply_markup=back_to_menu_kb()
@@ -84,18 +103,20 @@ async def start_avatar_flow(callback: CallbackQuery, state: FSMContext):
     
     await state.set_state(AvatarVideoStates.waiting_topic)
     await callback.message.edit_text(
-        "🎭 <b>Создание видео с AI-аватаром (Kling)</b>\n\n"
+        "🎭 <b>Создание видео с AI-аватаром (Kling Motion Control)</b>\n\n"
         "Процесс:\n"
         "1️⃣ Получите сценарий на основе базы знаний\n"
-        "2️⃣ Запишите аудио по сценарию\n"
-        "3️⃣ Загрузите аудио/видео в бот\n"
+        "2️⃣ Запишите видео по сценарию (3-30 сек)\n"
+        "3️⃣ Загрузите видео в бот\n"
         "4️⃣ Загрузите или сгенерируйте фото-аватар\n"
-        "5️⃣ Получите готовое видео с lip-sync + субтитры\n\n"
+        "5️⃣ Получите готовое видео + субтитры (FFmpeg)\n\n"
         "📝 Введите тему для сценария:",
         parse_mode="HTML",
         reply_markup=cancel_kb()
     )
     await callback.answer()
+
+# ============ SCRIPT GENERATION ============
 
 @router.message(AvatarVideoStates.waiting_topic)
 async def process_topic(message: Message, state: FSMContext):
@@ -111,7 +132,7 @@ async def process_topic(message: Message, state: FSMContext):
         
         await message.answer(
             f"📝 <b>Сценарий готов:</b>\n\n{script}\n\n"
-            "Прочитайте сценарий вслух и запишите аудио.\n"
+            "Прочитайте сценарий вслух и запишите видео (3-30 сек).\n"
             "Выберите действие:",
             parse_mode="HTML",
             reply_markup=confirm_edit_kb()
@@ -159,148 +180,95 @@ async def regenerate_script(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(AvatarVideoStates.waiting_script_confirm, F.data == "confirm")
 async def confirm_script(callback: CallbackQuery, state: FSMContext):
-    """Подтверждение — запрос аудио"""
+    """Подтверждение — запрос видео"""
     await state.set_state(AvatarVideoStates.waiting_video)
     
     await callback.message.edit_text(
         "✅ <b>Сценарий подтверждён!</b>\n\n"
-        "🎤 <b>Теперь отправьте аудио:</b>\n\n"
-        "Поддерживаемые форматы:\n"
-        "• 🎙 Голосовое сообщение\n"
-        "• 🎵 Аудиофайл (MP3, WAV, OGG, M4A, FLAC)\n"
-        "• 🎬 Видеофайл (аудио будет извлечено)\n"
-        "• 📎 Документ с аудио/видео\n\n"
-        "📤 <b>Отправьте файл:</b>",
+        "🎬 <b>Теперь отправьте видео:</b>\n\n"
+        "Требования:\n"
+        "• ⏱ Длительность: 3-30 секунд\n"
+        "• 📹 Форматы: MP4, MOV, MKV\n"
+        "• 📦 Размер: до 100 МБ\n"
+        "• 👤 В кадре: голова, плечи и торс\n\n"
+        "📤 <b>Отправьте видео:</b>",
         parse_mode="HTML",
         reply_markup=cancel_kb()
     )
     await callback.answer()
 
-@router.message(AvatarVideoStates.waiting_video, F.voice)
-async def process_voice(message: Message, state: FSMContext, bot: Bot):
-    """Получение голосового сообщения"""
-    voice = message.voice
-    
-    await message.answer("⏳ Загружаю аудио...")
-    
-    try:
-        audio_url = await file_upload_service.upload_telegram_file(
-            bot=bot,
-            file_id=voice.file_id,
-            filename=f"voice_{message.from_user.id}_{datetime.now().timestamp()}.ogg"
-        )
-        
-        await state.update_data(audio_url=audio_url, audio_duration=voice.duration or 60)
-        await state.set_state(AvatarVideoStates.selecting_avatar_source)
-        
-        await message.answer(
-            f"✅ <b>Голосовое загружено!</b>\n⏱ Длительность: {voice.duration} сек\n\n"
-            "Теперь выберите аватар:",
-            parse_mode="HTML",
-            reply_markup=avatar_source_kb()
-        )
-    except Exception as e:
-        logger.error(f"Voice upload error: {e}")
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
-
-@router.message(AvatarVideoStates.waiting_video, F.audio)
-async def process_audio(message: Message, state: FSMContext, bot: Bot):
-    """Получение аудиофайла"""
-    audio = message.audio
-    
-    await message.answer("⏳ Загружаю аудио...")
-    
-    try:
-        ext = "mp3"
-        if audio.file_name:
-            ext = audio.file_name.split('.')[-1] if '.' in audio.file_name else "mp3"
-        
-        audio_url = await file_upload_service.upload_telegram_file(
-            bot=bot,
-            file_id=audio.file_id,
-            filename=f"audio_{message.from_user.id}_{datetime.now().timestamp()}.{ext}"
-        )
-        
-        await state.update_data(audio_url=audio_url, audio_duration=audio.duration or 60)
-        await state.set_state(AvatarVideoStates.selecting_avatar_source)
-        
-        await message.answer(
-            f"✅ <b>Аудио загружено!</b>\n⏱ Длительность: {audio.duration or '?'} сек\n\n"
-            "Теперь выберите аватар:",
-            parse_mode="HTML",
-            reply_markup=avatar_source_kb()
-        )
-    except Exception as e:
-        logger.error(f"Audio upload error: {e}")
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
+# ============ VIDEO UPLOAD ============
 
 @router.message(AvatarVideoStates.waiting_video, F.video)
 async def process_video(message: Message, state: FSMContext, bot: Bot):
-    """Получение видеофайла — извлекаем аудио"""
+    """Получение видео"""
     video = message.video
+    duration = video.duration or 0
     
-    await message.answer("⏳ Извлекаю аудио из видео...")
+    if duration < 3:
+        await message.answer("⚠️ Видео слишком короткое (мин. 3 сек).", reply_markup=cancel_kb())
+        return
+    
+    if duration > 30:
+        await message.answer("⚠️ Видео слишком длинное (макс. 30 сек).", reply_markup=cancel_kb())
+        return
+    
+    await message.answer("⏳ Загружаю видео...")
     
     try:
-        video_data = await file_upload_service.download_telegram_file(bot, video.file_id)
+        ext = "mp4"
+        if video.file_name:
+            name_ext = os.path.splitext(video.file_name)[1].lower()
+            if name_ext in VIDEO_EXTENSIONS:
+                ext = name_ext[1:]
         
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_video:
-            tmp_video.write(video_data)
-            video_path = tmp_video.name
+        video_url = await file_upload_service.upload_telegram_file(
+            bot=bot,
+            file_id=video.file_id,
+            filename=f"motion_{message.from_user.id}_{datetime.now().timestamp()}.{ext}"
+        )
         
-        audio_path = video_path.replace(".mp4", ".mp3")
-        success = await subtitles_service.extract_audio_from_video(video_path, audio_path)
-        
-        if not success or not os.path.exists(audio_path):
-            audio_url = await file_upload_service.upload_telegram_file(
-                bot=bot,
-                file_id=video.file_id,
-                filename=f"video_{message.from_user.id}_{datetime.now().timestamp()}.mp4"
-            )
-        else:
-            with open(audio_path, 'rb') as f:
-                audio_data = f.read()
-            audio_url = await file_upload_service.upload_file(
-                audio_data,
-                f"audio_{message.from_user.id}_{datetime.now().timestamp()}.mp3"
-            )
-        
-        for path in [video_path, audio_path]:
-            if os.path.exists(path):
-                os.unlink(path)
-        
-        await state.update_data(audio_url=audio_url, audio_duration=video.duration or 60)
+        await state.update_data(video_url=video_url, video_duration=duration)
         await state.set_state(AvatarVideoStates.selecting_avatar_source)
         
         await message.answer(
-            f"✅ <b>Аудио извлечено из видео!</b>\n⏱ Длительность: {video.duration or '?'} сек\n\n"
+            f"✅ <b>Видео загружено!</b>\n⏱ Длительность: {duration} сек\n\n"
             "Теперь выберите аватар:",
             parse_mode="HTML",
             reply_markup=avatar_source_kb()
         )
     except Exception as e:
-        logger.error(f"Video processing error: {e}")
+        logger.error(f"Video upload error: {e}")
         await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
 
 @router.message(AvatarVideoStates.waiting_video, F.video_note)
 async def process_video_note(message: Message, state: FSMContext, bot: Bot):
     """Получение кружка"""
     video_note = message.video_note
+    duration = video_note.duration or 0
     
-    await message.answer("⏳ Извлекаю аудио из кружка...")
+    if duration < 3:
+        await message.answer("⚠️ Кружок слишком короткий (мин. 3 сек).", reply_markup=cancel_kb())
+        return
+    
+    if duration > 30:
+        await message.answer("⚠️ Кружок слишком длинный (макс. 30 сек).", reply_markup=cancel_kb())
+        return
+    
+    await message.answer("⏳ Загружаю кружок...")
     
     try:
-        audio_url = await file_upload_service.upload_telegram_file(
+        video_url = await file_upload_service.upload_telegram_file(
             bot=bot,
             file_id=video_note.file_id,
             filename=f"videonote_{message.from_user.id}_{datetime.now().timestamp()}.mp4"
         )
         
-        await state.update_data(audio_url=audio_url, audio_duration=video_note.duration or 60)
+        await state.update_data(video_url=video_url, video_duration=duration)
         await state.set_state(AvatarVideoStates.selecting_avatar_source)
         
         await message.answer(
-            f"✅ <b>Кружок загружен!</b>\n⏱ Длительность: {video_note.duration} сек\n\n"
+            f"✅ <b>Кружок загружен!</b>\n⏱ Длительность: {duration} сек\n\n"
             "Теперь выберите аватар:",
             parse_mode="HTML",
             reply_markup=avatar_source_kb()
@@ -310,79 +278,57 @@ async def process_video_note(message: Message, state: FSMContext, bot: Bot):
         await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
 
 @router.message(AvatarVideoStates.waiting_video, F.document)
-async def process_document(message: Message, state: FSMContext, bot: Bot):
-    """Получение документа (аудио/видео файл)"""
+async def process_document_video(message: Message, state: FSMContext, bot: Bot):
+    """Получение видео как документа"""
     doc = message.document
     filename = doc.file_name or "file"
     ext = os.path.splitext(filename)[1].lower()
     
-    if ext not in AUDIO_EXTENSIONS and ext not in VIDEO_EXTENSIONS:
+    if ext not in VIDEO_EXTENSIONS:
         await message.answer(
-            f"⚠️ Формат {ext} не поддерживается.\n\n"
-            f"Поддерживаемые аудио: {', '.join(AUDIO_EXTENSIONS)}\n"
-            f"Поддерживаемые видео: {', '.join(VIDEO_EXTENSIONS)}",
+            f"⚠️ Формат {ext} не поддерживается.\n"
+            f"Поддерживаемые: {', '.join(VIDEO_EXTENSIONS)}",
             reply_markup=cancel_kb()
         )
         return
     
-    await message.answer("⏳ Обрабатываю файл...")
+    if doc.file_size and doc.file_size > 100 * 1024 * 1024:
+        await message.answer("⚠️ Файл слишком большой (макс. 100 МБ).", reply_markup=cancel_kb())
+        return
+    
+    await message.answer("⏳ Загружаю видео...")
     
     try:
-        if ext in VIDEO_EXTENSIONS:
-            video_data = await file_upload_service.download_telegram_file(bot, doc.file_id)
-            
-            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-                tmp.write(video_data)
-                video_path = tmp.name
-            
-            audio_path = video_path.replace(ext, ".mp3")
-            success = await subtitles_service.extract_audio_from_video(video_path, audio_path)
-            
-            if success and os.path.exists(audio_path):
-                with open(audio_path, 'rb') as f:
-                    audio_data = f.read()
-                audio_url = await file_upload_service.upload_file(
-                    audio_data,
-                    f"audio_{message.from_user.id}_{datetime.now().timestamp()}.mp3"
-                )
-            else:
-                audio_url = await file_upload_service.upload_telegram_file(
-                    bot=bot,
-                    file_id=doc.file_id,
-                    filename=f"file_{message.from_user.id}_{datetime.now().timestamp()}{ext}"
-                )
-            
-            for path in [video_path, audio_path]:
-                if os.path.exists(path):
-                    os.unlink(path)
-        else:
-            audio_url = await file_upload_service.upload_telegram_file(
-                bot=bot,
-                file_id=doc.file_id,
-                filename=f"audio_{message.from_user.id}_{datetime.now().timestamp()}{ext}"
-            )
+        video_url = await file_upload_service.upload_telegram_file(
+            bot=bot,
+            file_id=doc.file_id,
+            filename=f"motion_{message.from_user.id}_{datetime.now().timestamp()}{ext}"
+        )
         
-        await state.update_data(audio_url=audio_url, audio_duration=60)
+        await state.update_data(video_url=video_url, video_duration=15)
         await state.set_state(AvatarVideoStates.selecting_avatar_source)
         
         await message.answer(
-            f"✅ <b>Файл обработан!</b>\n📄 {filename}\n\n"
+            f"✅ <b>Видео загружено!</b>\n📄 {filename}\n\n"
+            "⚠️ Убедитесь, что видео длится 3-30 сек.\n\n"
             "Теперь выберите аватар:",
             parse_mode="HTML",
             reply_markup=avatar_source_kb()
         )
     except Exception as e:
-        logger.error(f"Document processing error: {e}")
+        logger.error(f"Document video error: {e}")
         await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
 
 @router.message(AvatarVideoStates.waiting_video)
-async def process_audio_invalid(message: Message):
+async def process_video_invalid(message: Message):
     await message.answer(
-        "⚠️ Отправьте аудио, видео, голосовое или документ.\n\n"
-        f"Поддерживаемые аудио: {', '.join(AUDIO_EXTENSIONS)}\n"
-        f"Поддерживаемые видео: {', '.join(VIDEO_EXTENSIONS)}",
+        "⚠️ Отправьте видео.\n\n"
+        f"Поддерживаемые форматы: {', '.join(VIDEO_EXTENSIONS)}\n"
+        "Длительность: 3-30 секунд",
         reply_markup=cancel_kb()
     )
+
+# ============ AVATAR SELECTION ============
 
 @router.callback_query(AvatarVideoStates.selecting_avatar_source, F.data == "avatar:source:upload")
 async def select_upload_avatar(callback: CallbackQuery, state: FSMContext):
@@ -390,9 +336,10 @@ async def select_upload_avatar(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "📤 <b>Загрузите фото аватара</b>\n\n"
         "Требования:\n"
-        "• Лицо хорошо видно\n"
-        "• Прямой взгляд в камеру\n"
-        "• Хорошее освещение\n\n"
+        "• Форматы: JPEG, PNG, JPG\n"
+        "• Размер: до 10 МБ\n"
+        "• Разрешение: больше 300px\n"
+        "• Лицо хорошо видно\n\n"
         "📷 Отправьте фото:",
         parse_mode="HTML",
         reply_markup=cancel_kb()
@@ -551,6 +498,8 @@ async def process_avatar_photo(message: Message, state: FSMContext, bot: Bot):
 async def process_avatar_invalid(message: Message):
     await message.answer("⚠️ Отправьте фотографию.", reply_markup=cancel_kb())
 
+# ============ SETTINGS & GENERATION ============
+
 @router.callback_query(AvatarVideoStates.confirming_avatar, F.data == "avatar:confirm_image")
 async def confirm_avatar_ask_subtitles(callback: CallbackQuery, state: FSMContext):
     """После подтверждения аватара — спрашиваем про субтитры"""
@@ -559,12 +508,32 @@ async def confirm_avatar_ask_subtitles(callback: CallbackQuery, state: FSMContex
     await callback.message.answer(
         "🎬 <b>Добавить субтитры?</b>\n\n"
         "Субтитры будут:\n"
-        "• Сгенерированы через Whisper (транскрипция аудио)\n"
+        "• Извлечены из аудиодорожки вашего видео (FFmpeg)\n"
+        "• Транскрибированы через Whisper\n"
         "• Отображаться по 3-5 слов синхронно с речью\n"
-        "• Крупный белый шрифт с чёрной обводкой\n"
-        "• Наложены через FFmpeg на готовое видео",
+        "• Наложены на готовое видео",
         parse_mode="HTML",
         reply_markup=subtitles_confirm_kb()
+    )
+    await callback.answer()
+
+@router.callback_query(AvatarVideoStates.confirming_avatar, F.data == "avatar:regenerate_image")
+async def regenerate_avatar_image(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AvatarVideoStates.selecting_avatar_style)
+    await callback.message.answer(
+        "🎨 <b>Генерация аватара</b>\n\nВыберите стиль:",
+        parse_mode="HTML",
+        reply_markup=avatar_style_kb()
+    )
+    await callback.answer()
+
+@router.callback_query(AvatarVideoStates.confirming_avatar, F.data == "avatar:source:upload")
+async def switch_to_upload(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AvatarVideoStates.waiting_avatar_image)
+    await callback.message.answer(
+        "📤 <b>Загрузите фото аватара</b>\n\n📷 Отправьте фото:",
+        parse_mode="HTML",
+        reply_markup=cancel_kb()
     )
     await callback.answer()
 
@@ -587,18 +556,79 @@ async def back_to_avatar_confirm(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 @router.callback_query(AvatarVideoStates.selecting_subtitles, F.data.startswith("avatar:sub:"))
-async def process_subtitles_choice_and_generate(callback: CallbackQuery, state: FSMContext):
-    """Выбор субтитров (да/нет) и запуск генерации"""
-    choice = callback.data.split(":")[2]  # "yes" или "no"
+async def process_subtitles_choice(callback: CallbackQuery, state: FSMContext):
+    """Выбор субтитров — переход к выбору качества"""
+    choice = callback.data.split(":")[2]
     add_subtitles = choice == "yes"
     
-    data = await state.get_data()
-    audio_url = data.get("audio_url")
-    avatar_url = data.get("avatar_image_url")
-    script = data.get("script", "")
-    audio_duration = data.get("audio_duration", 60)
+    await state.update_data(add_subtitles=add_subtitles)
+    await state.set_state(AvatarVideoStates.selecting_quality)
     
-    if not audio_url or not avatar_url:
+    await callback.message.edit_text(
+        "📺 <b>Выберите качество видео:</b>",
+        parse_mode="HTML",
+        reply_markup=video_quality_kb()
+    )
+    await callback.answer()
+
+@router.callback_query(AvatarVideoStates.selecting_quality, F.data == "avatar:back_subs")
+async def back_to_subtitles(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AvatarVideoStates.selecting_subtitles)
+    await callback.message.edit_text(
+        "🎬 <b>Добавить субтитры?</b>",
+        parse_mode="HTML",
+        reply_markup=subtitles_confirm_kb()
+    )
+    await callback.answer()
+
+@router.callback_query(AvatarVideoStates.selecting_quality, F.data.startswith("avatar:quality:"))
+async def select_quality(callback: CallbackQuery, state: FSMContext):
+    """Выбор качества — переход к ориентации"""
+    quality = callback.data.split(":")[2]
+    await state.update_data(video_quality=quality)
+    await state.set_state(AvatarVideoStates.selecting_orientation)
+    
+    await callback.message.edit_text(
+        "🔄 <b>Ориентация персонажа:</b>\n\n"
+        "🖼 <b>Как на фото</b> — персонаж сохранит позу с фото\n"
+        "   (макс. 10 сек видео)\n\n"
+        "🎬 <b>Как в видео</b> — персонаж повторит движения из видео\n"
+        "   (макс. 30 сек видео)",
+        parse_mode="HTML",
+        reply_markup=orientation_kb()
+    )
+    await callback.answer()
+
+@router.callback_query(AvatarVideoStates.selecting_orientation, F.data == "avatar:back_quality")
+async def back_to_quality(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AvatarVideoStates.selecting_quality)
+    await callback.message.edit_text(
+        "📺 <b>Выберите качество видео:</b>",
+        parse_mode="HTML",
+        reply_markup=video_quality_kb()
+    )
+    await callback.answer()
+
+@router.callback_query(AvatarVideoStates.selecting_orientation, F.data.startswith("avatar:orient:"))
+async def process_orientation_and_generate(callback: CallbackQuery, state: FSMContext):
+    """Выбор ориентации и запуск генерации"""
+    orientation = callback.data.split(":")[2]
+    
+    data = await state.get_data()
+    video_url = data.get("video_url")
+    avatar_url = data.get("avatar_image_url")
+    video_duration = data.get("video_duration", 15)
+    add_subtitles = data.get("add_subtitles", False)
+    quality = data.get("video_quality", "720p")
+    
+    if orientation == "image" and video_duration > 10:
+        await callback.answer(
+            "⚠️ Для ориентации 'как на фото' видео должно быть до 10 сек!",
+            show_alert=True
+        )
+        return
+    
+    if not video_url or not avatar_url:
         await callback.message.answer(
             "❌ Ошибка: не найдены данные. Начните заново.",
             reply_markup=back_to_menu_kb()
@@ -606,61 +636,55 @@ async def process_subtitles_choice_and_generate(callback: CallbackQuery, state: 
         await callback.answer()
         return
     
-    await state.update_data(add_subtitles=add_subtitles)
+    await state.update_data(character_orientation=orientation)
     await state.set_state(AvatarVideoStates.generating)
     
     srt_content = None
     ass_content = None
     
     if add_subtitles:
-        await callback.message.answer("📝 Генерирую субтитры через Whisper...")
+        await callback.message.answer("📝 Извлекаю аудио и генерирую субтитры...")
         
         try:
             if subtitles_service.is_available():
-                # Транскрибируем аудио через Whisper
                 subtitles_result = await subtitles_service.transcribe_audio(
-                    audio_url=audio_url,
+                    audio_url=video_url,
                     language="ru"
                 )
                 logger.info(f"Whisper transcription: {len(subtitles_result.segments)} segments")
+                
+                srt_content = subtitles_service.generate_srt(subtitles_result)
+                ass_content = subtitles_service.generate_ass(subtitles_result)
+                
+                await state.update_data(srt_content=srt_content, ass_content=ass_content)
+                await callback.message.answer(f"✅ Субтитры готовы! ({len(subtitles_result.segments)} сегментов)")
             else:
-                # Fallback: генерируем из сценария
-                subtitles_result = await subtitles_service.generate_subtitles_from_script(
-                    script=script,
-                    audio_duration=audio_duration
-                )
-            
-            # Генерируем SRT и ASS (один стиль)
-            srt_content = subtitles_service.generate_srt(subtitles_result)
-            ass_content = subtitles_service.generate_ass(subtitles_result)
-            
-            await state.update_data(
-                srt_content=srt_content,
-                ass_content=ass_content
-            )
-            
-            await callback.message.answer(f"✅ Субтитры готовы! ({len(subtitles_result.segments)} сегментов по 3-5 слов)")
-            
+                await callback.message.answer("⚠️ Whisper недоступен. Продолжаю без субтитров...")
+                add_subtitles = False
+                
         except Exception as e:
             logger.error(f"Subtitles generation error: {e}", exc_info=True)
             await callback.message.answer(f"⚠️ Ошибка субтитров: {e}\nПродолжаю без субтитров...")
             add_subtitles = False
     
     await callback.message.answer(
-        "🎬 <b>Запускаю генерацию видео через Kling...</b>\n\n"
-        "Это может занять 5-15 минут.\n"
-        "Вы получите уведомление.",
+        "🎬 <b>Запускаю генерацию видео через Kling Motion Control...</b>\n\n"
+        f"📺 Качество: {quality}\n"
+        f"🔄 Ориентация: {'как на фото' if orientation == 'image' else 'как в видео'}\n\n"
+        "⏳ Это может занять 5-15 минут.\nВы получите уведомление.",
         parse_mode="HTML"
     )
     
     try:
-        result = await kling_avatar_service.create_avatar_video(
+        result = await kling_motion_service.create_motion_video(
             image_url=avatar_url,
-            audio_url=audio_url,
-            prompt=data.get("topic", "")
+            video_url=video_url,
+            prompt=data.get("topic", ""),
+            character_orientation=orientation,
+            mode=quality
         )
         
-        logger.info(f"Kling API response: {result}")
+        logger.info(f"Kling Motion API response: {result}")
         
         if result.get("code") != 200:
             raise Exception(result.get("msg", "Ошибка API"))
@@ -673,26 +697,24 @@ async def process_subtitles_choice_and_generate(callback: CallbackQuery, state: 
             task_id=task_id,
             chat_id=callback.message.chat.id,
             user_id=callback.from_user.id,
-            model="kling_avatar",
+            model="kling_motion",
             created_at=datetime.now(),
-            prompt=data.get("topic", "Avatar video")
+            prompt=data.get("topic", "Motion Control video")
         )
         task_tracker.add_task(video_task)
         
-        # Сохраняем данные субтитров в задачу
         if add_subtitles and (srt_content or ass_content):
             task_tracker.tasks[task_id].subtitles_data = {
                 "srt": srt_content,
                 "ass": ass_content
             }
         
-        subtitle_info = ""
-        if add_subtitles:
-            subtitle_info = "\n📝 Субтитры: будут наложены через FFmpeg"
+        subtitle_info = "\n📝 Субтитры: будут наложены через FFmpeg" if add_subtitles else ""
         
         await callback.message.answer(
             f"✅ <b>Генерация запущена!</b>\n\n"
-            f"🆔 Task ID: <code>{task_id}</code>{subtitle_info}\n\n"
+            f"🆔 Task ID: <code>{task_id}</code>\n"
+            f"📺 Качество: {quality}{subtitle_info}\n\n"
             f"⏳ Ожидайте уведомление (5-15 минут).",
             parse_mode="HTML",
             reply_markup=back_to_menu_kb()
@@ -700,28 +722,8 @@ async def process_subtitles_choice_and_generate(callback: CallbackQuery, state: 
         await state.clear()
         
     except Exception as e:
-        logger.error(f"Avatar video error: {e}")
+        logger.error(f"Motion Control video error: {e}")
         await callback.message.answer(f"❌ Ошибка: {e}", reply_markup=back_to_menu_kb())
         await state.clear()
     
-    await callback.answer()
-
-@router.callback_query(AvatarVideoStates.confirming_avatar, F.data == "avatar:regenerate_image")
-async def regenerate_avatar_image(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(AvatarVideoStates.selecting_avatar_style)
-    await callback.message.answer(
-        "🎨 <b>Генерация аватара</b>\n\nВыберите стиль:",
-        parse_mode="HTML",
-        reply_markup=avatar_style_kb()
-    )
-    await callback.answer()
-
-@router.callback_query(AvatarVideoStates.confirming_avatar, F.data == "avatar:source:upload")
-async def switch_to_upload(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(AvatarVideoStates.waiting_avatar_image)
-    await callback.message.answer(
-        "📤 <b>Загрузите фото аватара</b>\n\n📷 Отправьте фото:",
-        parse_mode="HTML",
-        reply_markup=cancel_kb()
-    )
     await callback.answer()

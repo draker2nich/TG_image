@@ -11,7 +11,7 @@ router = Router()
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
-    """Команда /start — сброс состояния и приветствие"""
+    """Команда /start"""
     await state.clear()
     
     missing = config.get_missing_keys()
@@ -22,10 +22,10 @@ async def cmd_start(message: Message, state: FSMContext):
     await message.answer(
         f"👋 Привет! Я бот для генерации контента.\n\n"
         f"📌 <b>Возможности:</b>\n"
-        f"• 🎭 Видео с AI-аватаром (Kling)\n"
+        f"• 🎭 Видео с AI-аватаром (Kling Motion Control)\n"
         f"• 📝 SEO-статьи (ChatGPT)\n"
         f"• 🎬 Короткие видео (Sora 2 / Veo 3)\n"
-        f"• 🖼 Карусели изображений (Nano Banana Pro)\n"
+        f"• 🖼 Карусели изображений\n"
         f"• 📅 Генерация контент-плана\n\n"
         f"{warning}",
         reply_markup=main_menu_kb()
@@ -33,7 +33,7 @@ async def cmd_start(message: Message, state: FSMContext):
 
 @router.message(Command("menu"))
 async def cmd_menu(message: Message, state: FSMContext):
-    """Команда /menu — возврат в главное меню"""
+    """Команда /menu"""
     await state.clear()
     await message.answer(
         "📌 Главное меню\n\nВыберите действие:",
@@ -42,7 +42,7 @@ async def cmd_menu(message: Message, state: FSMContext):
 
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext):
-    """Команда /cancel — отмена текущего действия"""
+    """Команда /cancel"""
     current_state = await state.get_state()
     await state.clear()
     
@@ -69,7 +69,7 @@ async def callback_cancel(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "menu:main")
 async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
-    """Возврат в главное меню через callback"""
+    """Возврат в главное меню"""
     await state.clear()
     await callback.message.edit_text(
         "📌 Главное меню\n\nВыберите действие:",
@@ -90,18 +90,16 @@ async def cmd_help(message: Message):
         "/check &lt;task_id&gt; — Проверить статус задачи\n"
         "/help — Эта справка\n\n"
         "<b>Функции:</b>\n"
-        "🎭 <b>Видео с аватаром</b> — создание видео с AI-аватаром через Kling\n"
+        "🎭 <b>Видео с аватаром (Motion Control)</b>\n"
         "   1. Получите сценарий\n"
-        "   2. Запишите видео на камеру\n"
+        "   2. Запишите видео (3-30 сек)\n"
         "   3. Загрузите фото аватара\n"
-        "   4. Получите готовое видео с lip-sync\n\n"
+        "   4. Получите видео с движениями аватара + субтитры\n\n"
         "📝 <b>SEO-статьи</b> — генерация оптимизированных статей\n\n"
         "🎬 <b>Короткие видео</b> — генерация через Sora 2 / Veo 3.1\n\n"
         "🖼 <b>Карусели</b> — генерация каруселей изображений\n\n"
         "📅 <b>Контент-план</b> — генерация плана на основе базы знаний\n\n"
-        "📚 <b>База знаний</b> — файлы для персонализации контента\n"
-        "   • Основные файлы — информация о вашем продукте\n"
-        "   • Контент конкурентов — для анализа и идей",
+        "📚 <b>База знаний</b> — файлы для персонализации контента",
         parse_mode="HTML",
         reply_markup=back_to_menu_kb()
     )
@@ -123,7 +121,7 @@ async def cmd_status(message: Message):
         "sora2": "Sora 2", 
         "veo3_fast": "Veo 3.1 Fast", 
         "veo3": "Veo 3.1 Quality",
-        "kling_avatar": "Kling AI Avatar",
+        "kling_motion": "Kling Motion Control",
         "nano_banana": "Nano Banana Pro"
     }
     
@@ -142,7 +140,7 @@ async def cmd_status(message: Message):
 async def cmd_check(message: Message):
     """Ручная проверка статуса задачи"""
     from services.kieai_service import kieai_service
-    from services.kling_avatar_service import kling_avatar_service
+    from services.kling_motion_service import kling_motion_service
     
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
@@ -156,10 +154,11 @@ async def cmd_check(message: Message):
     await message.answer("⏳ Проверяю статус...")
     
     try:
-        # Пробуем разные endpoints
-        result = await kling_avatar_service.get_task_status(task_id)
+        # Пробуем unified endpoint (для Kling Motion)
+        result = await kling_motion_service.get_task_status(task_id)
         
         if result.get("code") != 200:
+            # Пробуем Veo endpoint
             result = await kieai_service.get_veo_status(task_id)
         
         await message.answer(

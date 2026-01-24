@@ -12,7 +12,7 @@ class VideoTask:
     task_id: str
     chat_id: int
     user_id: int
-    model: Literal["sora2", "veo3", "veo3_fast", "kling_avatar", "nano_banana"]
+    model: Literal["sora2", "veo3", "veo3_fast", "kling_motion", "nano_banana"]
     created_at: datetime
     prompt: str = ""
     status: str = "pending"
@@ -39,11 +39,11 @@ class TaskTracker:
     
     async def check_task_status(self, task: VideoTask) -> dict:
         from services.kieai_service import kieai_service
-        from services.kling_avatar_service import kling_avatar_service
+        from services.kling_motion_service import kling_motion_service
         
         try:
-            if task.model in ("kling_avatar", "nano_banana"):
-                return await kling_avatar_service.get_task_status(task.task_id)
+            if task.model in ("kling_motion", "nano_banana"):
+                return await kling_motion_service.get_task_status(task.task_id)
             elif task.model in ("veo3", "veo3_fast"):
                 return await kieai_service.get_veo_status(task.task_id)
             else:
@@ -111,7 +111,7 @@ class TaskTracker:
                 logger.info(f"Polling {len(tasks_to_check)} tasks...")
                 
                 for task in tasks_to_check:
-                    timeout_minutes = 45 if task.model == "kling_avatar" else 30
+                    timeout_minutes = 45 if task.model == "kling_motion" else 30
                     
                     if datetime.now() - task.created_at > timedelta(minutes=timeout_minutes):
                         await self._notify_timeout(task)
@@ -146,7 +146,7 @@ class TaskTracker:
             
             model_names = {
                 "sora2": "Sora2", "veo3": "Veo3", "veo3_fast": "Veo3_Fast",
-                "kling_avatar": "Kling_Avatar", "nano_banana": "NanoBanana"
+                "kling_motion": "Kling_Motion", "nano_banana": "NanoBanana"
             }
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -159,7 +159,7 @@ class TaskTracker:
             )
             
             if result.success:
-                content_type = "video_avatar" if task.model == "kling_avatar" else "short_video"
+                content_type = "video_avatar" if task.model == "kling_motion" else "short_video"
                 await google_service.log_content(
                     content_type=content_type,
                     title=task.prompt[:100] if task.prompt else file_name,
@@ -230,7 +230,7 @@ class TaskTracker:
             
             model_names = {
                 "sora2": "Sora 2", "veo3": "Veo 3.1 Quality", "veo3_fast": "Veo 3.1 Fast",
-                "kling_avatar": "Kling AI Avatar", "nano_banana": "Nano Banana"
+                "kling_motion": "Kling Motion Control", "nano_banana": "Nano Banana"
             }
             
             # Накладываем субтитры через FFmpeg если есть
@@ -259,7 +259,7 @@ class TaskTracker:
             if video_with_subs:
                 video_file = BufferedInputFile(
                     video_with_subs,
-                    filename=f"avatar_video_with_subs_{task.task_id[:8]}.mp4"
+                    filename=f"motion_video_with_subs_{task.task_id[:8]}.mp4"
                 )
                 await self._bot.send_video(
                     chat_id=task.chat_id,

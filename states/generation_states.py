@@ -1,17 +1,19 @@
 from aiogram.fsm.state import State, StatesGroup
 
 class AvatarVideoStates(StatesGroup):
-    """Состояния для видео с аватаром Kling"""
+    """Состояния для видео с Kling Motion Control"""
     waiting_topic = State()
     waiting_script_confirm = State()
     waiting_script_edit = State()
-    waiting_video = State()  # Ожидание аудио
+    waiting_video = State()  # Ожидание видео (не аудио!)
     selecting_avatar_source = State()
     selecting_avatar_style = State()
     waiting_avatar_description = State()
     waiting_avatar_image = State()
     confirming_avatar = State()
-    selecting_subtitles = State()  # Да/Нет для субтитров (один стиль)
+    selecting_subtitles = State()  # Да/Нет для субтитров
+    selecting_quality = State()  # 720p / 1080p
+    selecting_orientation = State()  # image / video
     generating = State()
 
 class SEOArticleStates(StatesGroup):
