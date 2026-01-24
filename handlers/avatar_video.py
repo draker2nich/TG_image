@@ -49,14 +49,11 @@ def confirm_avatar_kb():
     builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
     return builder.as_markup()
 
-def subtitles_style_kb():
-    """Выбор стиля субтитров"""
+def subtitles_confirm_kb():
+    """Подтверждение добавления субтитров (один стиль)"""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="🎬 Modern (белые с контуром)", callback_data="avatar:sub:modern"))
-    builder.row(InlineKeyboardButton(text="📱 TikTok (крупные жирные)", callback_data="avatar:sub:tiktok"))
-    builder.row(InlineKeyboardButton(text="✨ Minimal (простые)", callback_data="avatar:sub:minimal"))
-    builder.row(InlineKeyboardButton(text="💛 Bold (жёлтые)", callback_data="avatar:sub:bold"))
-    builder.row(InlineKeyboardButton(text="❌ Без субтитров", callback_data="avatar:sub:none"))
+    builder.row(InlineKeyboardButton(text="✅ Да, добавить субтитры", callback_data="avatar:sub:yes"))
+    builder.row(InlineKeyboardButton(text="❌ Без субтитров", callback_data="avatar:sub:no"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="avatar:back_avatar"))
     return builder.as_markup()
 
@@ -93,8 +90,7 @@ async def start_avatar_flow(callback: CallbackQuery, state: FSMContext):
         "2️⃣ Запишите аудио по сценарию\n"
         "3️⃣ Загрузите аудио/видео в бот\n"
         "4️⃣ Загрузите или сгенерируйте фото-аватар\n"
-        "5️⃣ Выберите стиль субтитров\n"
-        "6️⃣ Получите готовое видео с lip-sync + субтитры\n\n"
+        "5️⃣ Получите готовое видео с lip-sync + субтитры\n\n"
         "📝 Введите тему для сценария:",
         parse_mode="HTML",
         reply_markup=cancel_kb()
@@ -246,29 +242,22 @@ async def process_video(message: Message, state: FSMContext, bot: Bot):
     await message.answer("⏳ Извлекаю аудио из видео...")
     
     try:
-        # Скачиваем видео
-        file = await bot.get_file(video.file_id)
         video_data = await file_upload_service.download_telegram_file(bot, video.file_id)
         
-        # Сохраняем во временный файл
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_video:
             tmp_video.write(video_data)
             video_path = tmp_video.name
         
-        # Извлекаем аудио
         audio_path = video_path.replace(".mp4", ".mp3")
-        
         success = await subtitles_service.extract_audio_from_video(video_path, audio_path)
         
         if not success or not os.path.exists(audio_path):
-            # Fallback: загружаем видео как есть
             audio_url = await file_upload_service.upload_telegram_file(
                 bot=bot,
                 file_id=video.file_id,
                 filename=f"video_{message.from_user.id}_{datetime.now().timestamp()}.mp4"
             )
         else:
-            # Загружаем извлечённое аудио
             with open(audio_path, 'rb') as f:
                 audio_data = f.read()
             audio_url = await file_upload_service.upload_file(
@@ -276,7 +265,6 @@ async def process_video(message: Message, state: FSMContext, bot: Bot):
                 f"audio_{message.from_user.id}_{datetime.now().timestamp()}.mp3"
             )
         
-        # Очищаем временные файлы
         for path in [video_path, audio_path]:
             if os.path.exists(path):
                 os.unlink(path)
@@ -341,7 +329,6 @@ async def process_document(message: Message, state: FSMContext, bot: Bot):
     
     try:
         if ext in VIDEO_EXTENSIONS:
-            # Извлекаем аудио из видео
             video_data = await file_upload_service.download_telegram_file(bot, doc.file_id)
             
             with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
@@ -369,7 +356,6 @@ async def process_document(message: Message, state: FSMContext, bot: Bot):
                 if os.path.exists(path):
                     os.unlink(path)
         else:
-            # Аудио файл — загружаем напрямую
             audio_url = await file_upload_service.upload_telegram_file(
                 bot=bot,
                 file_id=doc.file_id,
@@ -450,7 +436,7 @@ async def select_avatar_style(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AvatarVideoStates.waiting_avatar_description)
 async def process_avatar_description(message: Message, state: FSMContext):
-    """Генерация аватара через Nano Banana (для аватаров!)"""
+    """Генерация аватара через Nano Banana"""
     description = message.text.strip()
     data = await state.get_data()
     style_prompt = data.get("avatar_style_prompt", "")
@@ -460,7 +446,6 @@ async def process_avatar_description(message: Message, state: FSMContext):
     try:
         full_prompt = f"{style_prompt}, {description}, portrait photo, high quality, realistic face"
         
-        # Используем Nano Banana для аватаров (НЕ 4o Image!)
         result = await kieai_service.generate_nano_banana_image(
             prompt=full_prompt,
             aspect_ratio="1:1"
@@ -475,7 +460,6 @@ async def process_avatar_description(message: Message, state: FSMContext):
         
         await message.answer("⏳ Ожидаю результат...")
         
-        # Ждём результат через unified endpoint (для Nano Banana)
         avatar_url = await wait_for_image_result(task_id)
         
         if not avatar_url:
@@ -568,15 +552,19 @@ async def process_avatar_invalid(message: Message):
     await message.answer("⚠️ Отправьте фотографию.", reply_markup=cancel_kb())
 
 @router.callback_query(AvatarVideoStates.confirming_avatar, F.data == "avatar:confirm_image")
-async def confirm_avatar_select_subtitles(callback: CallbackQuery, state: FSMContext):
-    """После подтверждения аватара — выбор стиля субтитров"""
+async def confirm_avatar_ask_subtitles(callback: CallbackQuery, state: FSMContext):
+    """После подтверждения аватара — спрашиваем про субтитры"""
     await state.set_state(AvatarVideoStates.selecting_subtitles)
     
     await callback.message.answer(
-        "🎬 <b>Выберите стиль субтитров:</b>\n\n"
-        "Субтитры будут наложены на готовое видео.",
+        "🎬 <b>Добавить субтитры?</b>\n\n"
+        "Субтитры будут:\n"
+        "• Сгенерированы через Whisper (транскрипция аудио)\n"
+        "• Отображаться по 3-5 слов синхронно с речью\n"
+        "• Крупный белый шрифт с чёрной обводкой\n"
+        "• Наложены через FFmpeg на готовое видео",
         parse_mode="HTML",
-        reply_markup=subtitles_style_kb()
+        reply_markup=subtitles_confirm_kb()
     )
     await callback.answer()
 
@@ -599,9 +587,10 @@ async def back_to_avatar_confirm(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 @router.callback_query(AvatarVideoStates.selecting_subtitles, F.data.startswith("avatar:sub:"))
-async def select_subtitles_and_generate(callback: CallbackQuery, state: FSMContext):
-    """Выбор стиля субтитров и запуск генерации"""
-    subtitle_style = callback.data.split(":")[2]
+async def process_subtitles_choice_and_generate(callback: CallbackQuery, state: FSMContext):
+    """Выбор субтитров (да/нет) и запуск генерации"""
+    choice = callback.data.split(":")[2]  # "yes" или "no"
+    add_subtitles = choice == "yes"
     
     data = await state.get_data()
     audio_url = data.get("audio_url")
@@ -617,46 +606,48 @@ async def select_subtitles_and_generate(callback: CallbackQuery, state: FSMConte
         await callback.answer()
         return
     
-    await state.update_data(subtitle_style=subtitle_style)
+    await state.update_data(add_subtitles=add_subtitles)
     await state.set_state(AvatarVideoStates.generating)
     
     srt_content = None
     ass_content = None
-    subtitles_result = None
     
-    if subtitle_style != "none":
-        await callback.message.answer("📝 Генерирую субтитры (транскрипция аудио)...")
+    if add_subtitles:
+        await callback.message.answer("📝 Генерирую субтитры через Whisper...")
         
         try:
             if subtitles_service.is_available():
+                # Транскрибируем аудио через Whisper
                 subtitles_result = await subtitles_service.transcribe_audio(
                     audio_url=audio_url,
                     language="ru"
                 )
-                logger.info(f"Transcription result: {len(subtitles_result.segments)} segments")
+                logger.info(f"Whisper transcription: {len(subtitles_result.segments)} segments")
             else:
+                # Fallback: генерируем из сценария
                 subtitles_result = await subtitles_service.generate_subtitles_from_script(
                     script=script,
                     audio_duration=audio_duration
                 )
             
+            # Генерируем SRT и ASS (один стиль)
             srt_content = subtitles_service.generate_srt(subtitles_result)
-            ass_content = subtitles_service.generate_ass(subtitles_result, style=subtitle_style)
+            ass_content = subtitles_service.generate_ass(subtitles_result)
             
             await state.update_data(
                 srt_content=srt_content,
                 ass_content=ass_content
             )
             
-            await callback.message.answer(f"✅ Субтитры готовы! ({len(subtitles_result.segments)} сегментов)")
+            await callback.message.answer(f"✅ Субтитры готовы! ({len(subtitles_result.segments)} сегментов по 3-5 слов)")
             
         except Exception as e:
             logger.error(f"Subtitles generation error: {e}", exc_info=True)
             await callback.message.answer(f"⚠️ Ошибка субтитров: {e}\nПродолжаю без субтитров...")
-            subtitle_style = "none"
+            add_subtitles = False
     
     await callback.message.answer(
-        "🎬 <b>Запускаю генерацию видео...</b>\n\n"
+        "🎬 <b>Запускаю генерацию видео через Kling...</b>\n\n"
         "Это может занять 5-15 минут.\n"
         "Вы получите уведомление.",
         parse_mode="HTML"
@@ -688,16 +679,16 @@ async def select_subtitles_and_generate(callback: CallbackQuery, state: FSMConte
         )
         task_tracker.add_task(video_task)
         
-        if subtitle_style != "none" and (srt_content or ass_content):
+        # Сохраняем данные субтитров в задачу
+        if add_subtitles and (srt_content or ass_content):
             task_tracker.tasks[task_id].subtitles_data = {
-                "style": subtitle_style,
                 "srt": srt_content,
                 "ass": ass_content
             }
         
         subtitle_info = ""
-        if subtitle_style != "none":
-            subtitle_info = f"\n📝 Субтитры: {subtitle_style} (будут наложены на видео)"
+        if add_subtitles:
+            subtitle_info = "\n📝 Субтитры: будут наложены через FFmpeg"
         
         await callback.message.answer(
             f"✅ <b>Генерация запущена!</b>\n\n"

@@ -18,7 +18,7 @@ class VideoTask:
     status: str = "pending"
     result_url: Optional[str] = None
     error: Optional[str] = None
-    subtitles_data: Optional[dict] = field(default=None)
+    subtitles_data: Optional[dict] = field(default=None)  # {"srt": ..., "ass": ...}
 
 class TaskTracker:
     def __init__(self):
@@ -174,7 +174,7 @@ class TaskTracker:
             return None
     
     async def _burn_subtitles(self, task: VideoTask, video_url: str) -> Optional[bytes]:
-        """Накладывает субтитры на видео"""
+        """Накладывает субтитры на видео через FFmpeg"""
         from services.subtitles_service import subtitles_service
         
         if not task.subtitles_data:
@@ -185,7 +185,7 @@ class TaskTracker:
             return None
         
         try:
-            logger.info(f"Burning subtitles for task {task.task_id}")
+            logger.info(f"Burning subtitles for task {task.task_id} via FFmpeg")
             video_with_subs = await subtitles_service.burn_subtitles_to_video(
                 video_url=video_url,
                 ass_content=ass_content
@@ -197,7 +197,7 @@ class TaskTracker:
             return None
     
     async def _send_subtitles_files(self, task: VideoTask):
-        """Отправляет файлы субтитров отдельно"""
+        """Отправляет файл субтитров (SRT) отдельно"""
         if not self._bot or not task.subtitles_data:
             return
         
@@ -205,7 +205,6 @@ class TaskTracker:
             from aiogram.types import BufferedInputFile
             
             srt_content = task.subtitles_data.get("srt")
-            style = task.subtitles_data.get("style", "modern")
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             
             if srt_content:
@@ -234,28 +233,30 @@ class TaskTracker:
                 "kling_avatar": "Kling AI Avatar", "nano_banana": "Nano Banana"
             }
             
-            # Пробуем наложить субтитры если есть
+            # Накладываем субтитры через FFmpeg если есть
             video_with_subs = None
-            if task.subtitles_data and task.subtitles_data.get("style") != "none":
+            has_subtitles = task.subtitles_data and task.subtitles_data.get("ass")
+            
+            if has_subtitles:
                 await self._bot.send_message(
                     chat_id=task.chat_id,
-                    text="⏳ Накладываю субтитры на видео..."
+                    text="⏳ Накладываю субтитры через FFmpeg..."
                 )
                 video_with_subs = await self._burn_subtitles(task, video_url)
             
+            # Загружаем на Google Drive
             google_url = await self._upload_to_google(task, video_url)
             google_info = f"\n☁️ <a href='{google_url}'>Google Drive</a>" if google_url else ""
             
             subtitle_info = ""
-            if task.subtitles_data and task.subtitles_data.get("style") != "none":
+            if has_subtitles:
                 if video_with_subs:
-                    subtitle_info = f"\n📝 Субтитры: ✅ наложены ({task.subtitles_data.get('style')})"
+                    subtitle_info = "\n📝 Субтитры: ✅ наложены (FFmpeg)"
                 else:
-                    subtitle_info = f"\n📝 Субтитры: ⚠️ не удалось наложить (FFmpeg)"
+                    subtitle_info = "\n📝 Субтитры: ⚠️ не удалось наложить"
             
             # Отправляем видео
             if video_with_subs:
-                # Отправляем видео с субтитрами
                 video_file = BufferedInputFile(
                     video_with_subs,
                     filename=f"avatar_video_with_subs_{task.task_id[:8]}.mp4"
@@ -271,7 +272,6 @@ class TaskTracker:
                     parse_mode="HTML"
                 )
             else:
-                # Отправляем оригинальное видео
                 try:
                     await self._bot.send_video(
                         chat_id=task.chat_id,
@@ -296,7 +296,7 @@ class TaskTracker:
                     )
             
             # Отправляем SRT файл отдельно
-            if task.subtitles_data and task.subtitles_data.get("style") != "none":
+            if has_subtitles:
                 await self._send_subtitles_files(task)
             
             logger.info(f"Task {task.task_id} completed, user notified")

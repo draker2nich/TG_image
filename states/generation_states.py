@@ -11,11 +11,11 @@ class AvatarVideoStates(StatesGroup):
     waiting_avatar_description = State()
     waiting_avatar_image = State()
     confirming_avatar = State()
-    selecting_subtitles = State()  # НОВОЕ: выбор стиля субтитров
+    selecting_subtitles = State()  # Да/Нет для субтитров (один стиль)
     generating = State()
 
 class SEOArticleStates(StatesGroup):
-    """Состояния для SEO-статей (упрощённые)"""
+    """Состояния для SEO-статей"""
     waiting_topic = State()
 
 class ShortVideoStates(StatesGroup):

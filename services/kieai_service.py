@@ -153,6 +153,51 @@ class KieAIService:
             ) as resp:
                 return await resp.json()
     
+    async def generate_nano_banana_edit(
+        self,
+        prompt: str,
+        image_urls: list[str],
+        aspect_ratio: str = "1:1",
+        output_format: str = "png",
+        callback_url: Optional[str] = None
+    ) -> dict:
+        """
+        Редактирование изображения через Google Nano Banana Edit
+        
+        Args:
+            prompt: Описание желаемого результата (max 5000 символов)
+            image_urls: Список URL изображений для редактирования (до 10 шт)
+            aspect_ratio: Соотношение сторон ("1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9", "auto")
+            output_format: Формат вывода ("png" или "jpeg")
+            callback_url: URL для колбэка
+        
+        Returns:
+            dict с taskId или ошибкой
+        """
+        if not self.is_available():
+            raise RuntimeError("Kie.ai API недоступен")
+        
+        payload = {
+            "model": "google/nano-banana-edit",
+            "input": {
+                "prompt": prompt,
+                "image_urls": image_urls,
+                "output_format": output_format,
+                "image_size": aspect_ratio
+            }
+        }
+        
+        if callback_url:
+            payload["callBackUrl"] = callback_url
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.base_url}/api/v1/jobs/createTask",
+                headers=self._headers(),
+                json=payload
+            ) as resp:
+                return await resp.json()
+    
     async def generate_4o_image(
         self,
         prompt: str,
