@@ -2,23 +2,41 @@ from aiogram.fsm.state import State, StatesGroup
 
 class AvatarVideoStates(StatesGroup):
     """Состояния для видео с Kling Motion Control"""
+    # Сценарий
     waiting_topic = State()
     waiting_script_confirm = State()
     waiting_script_edit = State()
-    waiting_video = State()  # Ожидание видео (не аудио!)
+    
+    # Видео
+    waiting_video = State()
+    
+    # Выбор источника аватара
     selecting_avatar_source = State()
+    
+    # Генерация аватара с нуля (текст -> изображение)
     selecting_avatar_style = State()
     waiting_avatar_description = State()
+    
+    # Генерация аватара из фото (изображение -> изображение) через Nano Banana Edit
+    waiting_source_image = State()
+    selecting_edit_style = State()
+    waiting_edit_description = State()
+    
+    # Загрузка готового фото
     waiting_avatar_image = State()
+    
+    # Подтверждение и настройки
     confirming_avatar = State()
-    selecting_subtitles = State()  # Да/Нет для субтитров
-    selecting_quality = State()  # 720p / 1080p
-    selecting_orientation = State()  # image / video
+    selecting_subtitles = State()
+    selecting_quality = State()
+    selecting_orientation = State()
     generating = State()
+
 
 class SEOArticleStates(StatesGroup):
     """Состояния для SEO-статей"""
     waiting_topic = State()
+
 
 class ShortVideoStates(StatesGroup):
     """Состояния для Sora2/Veo3"""
@@ -29,10 +47,12 @@ class ShortVideoStates(StatesGroup):
     selecting_aspect = State()
     generating = State()
 
+
 class KnowledgeBaseStates(StatesGroup):
     """Состояния для базы знаний"""
     waiting_file = State()
     confirming_delete = State()
+
 
 class ContentPlanStates(StatesGroup):
     """Состояния для контент-плана"""
@@ -43,6 +63,7 @@ class ContentPlanStates(StatesGroup):
     generating = State()
     viewing_plan = State()
     selecting_idea = State()
+
 
 class CarouselStates(StatesGroup):
     """Состояния для каруселей"""
