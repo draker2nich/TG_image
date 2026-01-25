@@ -54,6 +54,11 @@ class KnowledgeBaseStates(StatesGroup):
     confirming_delete = State()
 
 
+class CompetitorsStates(StatesGroup):
+    """Состояния для базы конкурентов"""
+    waiting_link = State()
+
+
 class ContentPlanStates(StatesGroup):
     """Состояния для контент-плана"""
     entering_niche = State()

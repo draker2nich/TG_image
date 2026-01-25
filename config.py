@@ -8,6 +8,7 @@ load_dotenv()
 class Config:
     # Telegram
     BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    ALLOWED_USER_IDS: list[int] = None  # Будет инициализирован в __post_init__
     
     # OpenAI
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
@@ -26,6 +27,27 @@ class Config:
     KNOWLEDGE_BASE_DIR: str = os.getenv("KNOWLEDGE_BASE_DIR", "knowledge_base")
     COMPETITORS_DIR: str = os.getenv("COMPETITORS_DIR", "knowledge_base/competitors")
     
+    def __post_init__(self):
+        """Парсинг списка разрешённых пользователей"""
+        allowed_ids_str = os.getenv("ALLOWED_USER_IDS", "")
+        if allowed_ids_str:
+            try:
+                self.ALLOWED_USER_IDS = [
+                    int(uid.strip()) 
+                    for uid in allowed_ids_str.split(",") 
+                    if uid.strip().isdigit()
+                ]
+            except ValueError:
+                self.ALLOWED_USER_IDS = []
+        else:
+            self.ALLOWED_USER_IDS = []
+    
+    def is_user_allowed(self, user_id: int) -> bool:
+        """Проверяет, разрешён ли доступ пользователю"""
+        if not self.ALLOWED_USER_IDS:
+            return True  # Если список пуст, доступ для всех
+        return user_id in self.ALLOWED_USER_IDS
+    
     def validate(self) -> dict[str, bool]:
         """Проверка наличия API ключей"""
         return {
@@ -41,3 +63,5 @@ class Config:
         return [k for k, v in validation.items() if not v]
 
 config = Config()
+# Вызываем __post_init__ для инициализации ALLOWED_USER_IDS
+config.__post_init__()

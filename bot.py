@@ -6,6 +6,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from config import config
+from middlewares.auth import AuthMiddleware
 from handlers import (
     start, avatar_video, seo_article, short_video, 
     knowledge_base, content_plan, carousel
@@ -27,6 +28,13 @@ async def main():
     if missing:
         logger.warning(f"Отсутствуют API ключи: {', '.join(missing)}")
     
+    # Логируем режим авторизации
+    if config.ALLOWED_USER_IDS:
+        logger.info(f"🔒 Бот работает в приватном режиме. Разрешено пользователей: {len(config.ALLOWED_USER_IDS)}")
+        logger.info(f"Разрешённые ID: {config.ALLOWED_USER_IDS}")
+    else:
+        logger.info("🌐 Бот работает в публичном режиме (доступ для всех)")
+    
     bot = Bot(
         token=config.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
@@ -35,6 +43,10 @@ async def main():
     task_tracker.set_bot(bot)
     
     dp = Dispatcher(storage=MemoryStorage())
+    
+    # Подключаем middleware для проверки доступа
+    dp.message.middleware(AuthMiddleware())
+    dp.callback_query.middleware(AuthMiddleware())
     
     # Регистрация роутеров
     dp.include_router(start.router)

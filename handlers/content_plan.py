@@ -9,6 +9,7 @@ from states.generation_states import ContentPlanStates
 from keyboards.menus import cancel_kb, back_to_menu_kb, confirm_edit_kb
 from services.content_plan_service import content_plan_service, ContentIdea
 from services.openai_service import openai_service
+from services.google_service import google_service
 
 router = Router()
 
@@ -194,14 +195,31 @@ async def generate_plan(callback: CallbackQuery, state: FSMContext):
     days = 7 if period == "week" else 30
     total = days * posts_per_day * len(platforms)
     
-    # Проверяем наличие контента конкурентов
-    comp_content = openai_service._load_competitors_content()
+    # Проверяем наличие контента конкурентов для выбранных платформ
+    import os
+    import json
+    COMPETITORS_FILE = os.path.join("knowledge_base", "competitors.json")
+    
+    has_competitors = False
+    if os.path.exists(COMPETITORS_FILE):
+        try:
+            with open(COMPETITORS_FILE, 'r', encoding='utf-8') as f:
+                competitors = json.load(f)
+            # Проверяем есть ли ссылки для выбранных платформ
+            for platform in platforms:
+                if competitors.get(platform, []):
+                    has_competitors = True
+                    break
+        except:
+            pass
+    
     await callback.message.edit_text(
         f"⏳ Генерирую контент-план...\n\n"
         f"📝 Ниша: {niche}\n"
         f"📆 Период: {days} дней\n"
         f"📱 Платформ: {len(platforms)}\n"
         f"📊 Всего идей: ~{total}\n"
+        f"{'🎯 Анализ конкурентов: включён' if has_competitors else '📋 Без анализа конкурентов'}\n"
     )
     
     try:
@@ -210,8 +228,18 @@ async def generate_plan(callback: CallbackQuery, state: FSMContext):
             period=period,
             platforms=platforms,
             posts_per_day=posts_per_day,
-            use_competitors_analysis=bool(comp_content)
+            use_competitors_analysis=has_competitors
         )
+        
+        # Логируем идеи в Google Sheets
+        for idea in plan.ideas:
+            await google_service.log_content(
+                content_type="content_plan",
+                title=idea.title,
+                status="generated",
+                platform=idea.platform,
+                notes=f"{idea.description} | Хук: {idea.hook} | Формат: {idea.format}"
+            )
         
         # Сохраняем план
         await state.update_data(content_plan={
@@ -510,6 +538,16 @@ async def regenerate_plan(callback: CallbackQuery, state: FSMContext):
             posts_per_day=posts_per_day,
             use_competitors_analysis=bool(comp_content)
         )
+        
+        # Логируем идеи в Google Sheets
+        for idea in plan.ideas:
+            await google_service.log_content(
+                content_type="content_plan",
+                title=idea.title,
+                status="generated",
+                platform=idea.platform,
+                notes=f"{idea.description} | Хук: {idea.hook} | Формат: {idea.format}"
+            )
         
         await state.update_data(content_plan={
             "topic": plan.topic,

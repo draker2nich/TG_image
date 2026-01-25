@@ -3,6 +3,8 @@ import json
 from openai import AsyncOpenAI
 from config import config
 
+COMPETITORS_FILE = os.path.join(config.KNOWLEDGE_BASE_DIR, "competitors.json")
+
 class OpenAIService:
     def __init__(self):
         self.client = AsyncOpenAI(api_key=config.OPENAI_API_KEY) if config.OPENAI_API_KEY else None
@@ -31,7 +33,7 @@ class OpenAIService:
         files_content = []
         for filename in os.listdir(dir_path):
             filepath = os.path.join(dir_path, filename)
-            if not os.path.isfile(filepath):
+            if not os.path.isfile(filepath) or filename == "competitors.json":
                 continue
             
             try:
@@ -66,18 +68,44 @@ class OpenAIService:
         
         return "\n\n".join(content_parts)
     
-    def _load_competitors_content(self) -> str:
-        """Загружает контент конкурентов"""
-        files = self._load_files_from_dir(config.COMPETITORS_DIR)
+    def _load_competitors_content(self, platforms: list[str] = None) -> str:
+        """
+        Загружает контент конкурентов для указанных платформ
         
-        if not files:
+        Args:
+            platforms: список платформ ["telegram", "instagram", "youtube", "tiktok"]
+                      если None - загружаются все
+        """
+        if not os.path.exists(COMPETITORS_FILE):
             return ""
         
-        content_parts = []
-        for filename, content in files:
-            content_parts.append(f"=== Конкурент: {filename} ===\n{content}")
+        try:
+            with open(COMPETITORS_FILE, 'r', encoding='utf-8') as f:
+                competitors = json.load(f)
+        except:
+            return ""
         
-        return "\n\n".join(content_parts)
+        # Если платформы не указаны, берём все
+        if platforms is None:
+            platforms = ["telegram", "instagram", "youtube", "tiktok"]
+        
+        content_parts = []
+        platform_names = {
+            "telegram": "Telegram",
+            "instagram": "Instagram",
+            "youtube": "YouTube",
+            "tiktok": "TikTok"
+        }
+        
+        for platform in platforms:
+            links = competitors.get(platform, [])
+            if links:
+                content_parts.append(
+                    f"=== Конкуренты {platform_names.get(platform, platform)} ===\n" +
+                    "\n".join(f"{i+1}. {link}" for i, link in enumerate(links))
+                )
+        
+        return "\n\n".join(content_parts) if content_parts else ""
     
     async def generate_avatar_script(self, topic: str, duration_seconds: int = 60) -> str:
         """Генерирует сценарий для видео с аватаром"""
@@ -86,7 +114,6 @@ class OpenAIService:
         
         kb_content = self._load_knowledge_base()
         
-        # Формируем системный промпт в зависимости от наличия базы знаний
         if kb_content.strip():
             system = f"""Ты — профессиональный копирайтер для видеосценариев.
 
@@ -267,12 +294,18 @@ class OpenAIService:
         )
         return response.choices[0].message.content
     
-    async def analyze_competitors_content(self, niche: str = "") -> dict:
-        """Анализирует контент конкурентов из загруженных файлов"""
+    async def analyze_competitors_content(self, niche: str = "", platforms: list[str] = None) -> dict:
+        """
+        Анализирует контент конкурентов для указанных платформ
+        
+        Args:
+            niche: ниша/тематика
+            platforms: список платформ для анализа
+        """
         if not self.client:
             raise RuntimeError("OpenAI API недоступен")
         
-        comp_content = self._load_competitors_content()
+        comp_content = self._load_competitors_content(platforms)
         
         if not comp_content.strip():
             return {
@@ -280,18 +313,17 @@ class OpenAIService:
                 "successful_hooks": [],
                 "trending_topics": [],
                 "content_formats": [],
-                "engagement_insights": "Контент конкурентов не загружен",
+                "engagement_insights": "Контент конкурентов не добавлен",
                 "recommendations": []
             }
         
         system = """Ты — эксперт по вирусному контенту и SMM-аналитик.
-Проанализируй предоставленные данные о контенте конкурентов и выяви:
+Проанализируй предоставленные ссылки на контент конкурентов и выяви:
 
-1. Общие паттерны успешного контента
-2. Типы хуков и заголовков, которые работают
-3. Популярные темы
-4. Форматы контента
-5. Рекомендации для создания контента
+1. Общие паттерны успешного контента (на основе URL и названий каналов)
+2. Типы контента которые публикуются
+3. Популярные темы (можно предположить по именам каналов/профилей)
+4. Рекомендации для создания контента
 
 Ответь в формате JSON:
 {
@@ -309,7 +341,7 @@ class OpenAIService:
             model=self.model,
             messages=[
                 {"role": "system", "content": system},
-                {"role": "user", "content": f"Контент конкурентов:{niche_context}\n\n{comp_content[:8000]}"}
+                {"role": "user", "content": f"Ссылки на конкурентов:{niche_context}\n\n{comp_content[:8000]}"}
             ],
             max_tokens=2000,
             response_format={"type": "json_object"}

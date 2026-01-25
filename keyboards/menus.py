@@ -2,7 +2,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 def main_menu_kb() -> InlineKeyboardMarkup:
-    """Главное меню (без Google)"""
+    """Главное меню"""
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="🎭 Видео с аватаром", callback_data="menu:avatar"),
@@ -21,11 +21,12 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 def knowledge_base_kb(has_files: bool = False) -> InlineKeyboardMarkup:
-    """Меню базы знаний (упрощённое)"""
+    """Меню базы знаний с разделом конкурентов"""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="📤 Загрузить файл", callback_data="kb:upload"))
     if has_files:
         builder.row(InlineKeyboardButton(text="🗑 Удалить файл", callback_data="kb:delete"))
+    builder.row(InlineKeyboardButton(text="🎯 База конкурентов", callback_data="kb:competitors"))
     builder.row(InlineKeyboardButton(text="⬅️ Главное меню", callback_data="menu:main"))
     return builder.as_markup()
 

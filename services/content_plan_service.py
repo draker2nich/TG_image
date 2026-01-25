@@ -28,9 +28,10 @@ class ContentPlanService:
     def __init__(self):
         pass
     
-    async def analyze_competitors(self, niche: str = "") -> dict:
-        """Анализирует контент конкурентов из загруженных файлов"""
-        return await openai_service.analyze_competitors_content(niche)
+    async def analyze_competitors(self, niche: str = "", platforms: list[str] = None) -> dict:
+        """Анализирует контент конкурентов для указанных платформ"""
+        return await openai_service.analyze_competitors_content(niche, platforms)
+    
     
     async def generate_content_ideas(
         self,
@@ -108,103 +109,106 @@ class ContentPlanService:
         return ideas
     
     async def generate_content_plan(
-        self,
-        niche: str,
-        period: str = "week",
-        platforms: list[str] = None,
-        posts_per_day: int = 1,
-        use_competitors_analysis: bool = True
-    ) -> ContentPlan:
-        """Генерирует полный контент-план"""
-        if not openai_service.is_available():
-            raise RuntimeError("OpenAI API недоступен")
-        
-        platforms = platforms or ["tiktok", "instagram"]
-        
-        # Анализируем контент конкурентов из файлов
-        analysis = {}
-        if use_competitors_analysis:
-            analysis = await self.analyze_competitors(niche)
-        
-        # Рассчитываем количество идей
-        days = 7 if period == "week" else 30
-        total_posts = days * posts_per_day * len(platforms)
-        
-        kb_content = openai_service._load_knowledge_base()
-        comp_content = openai_service._load_competitors_content()
-        
-        system = f"""Ты — стратег контент-маркетинга.
-Создай детальный контент-план с учётом:
-- Разнообразия форматов
-- Оптимального времени публикации
-- Трендов и сезонности
-- Вовлечения аудитории
+            self,
+            niche: str,
+            period: str = "week",
+            platforms: list[str] = None,
+            posts_per_day: int = 1,
+            use_competitors_analysis: bool = True
+        ) -> ContentPlan:
+            """Генерирует полный контент-план"""
+            if not openai_service.is_available():
+                raise RuntimeError("OpenAI API недоступен")
+            
+            platforms = platforms or ["tiktok", "instagram"]
+            
+            # Анализируем контент конкурентов для ВЫБРАННЫХ платформ
+            analysis = {}
+            if use_competitors_analysis:
+                analysis = await self.analyze_competitors(niche, platforms)
+            
+            # Рассчитываем количество идей
+            days = 7 if period == "week" else 30
+            total_posts = days * posts_per_day * len(platforms)
+            
+            kb_content = openai_service._load_knowledge_base()
+            comp_content = openai_service._load_competitors_content(platforms)  # Только для выбранных платформ
+            
+            system = f"""Ты — стратег контент-маркетинга.
+    Создай детальный контент-план с учётом:
+    - Разнообразия форматов
+    - Оптимального времени публикации
+    - Трендов и сезонности
+    - Вовлечения аудитории
 
-База знаний (информация о продукте/услуге):
-{kb_content[:2000] if kb_content else 'Пуста.'}
+    База знаний (информация о продукте/услуге):
+    {kb_content[:2000] if kb_content else 'Пуста.'}
 
-Анализ конкурентов:
-{json.dumps(analysis, ensure_ascii=False) if analysis else 'Не предоставлен.'}
+    Ссылки на конкурентов (для анализа):
+    {comp_content[:2000] if comp_content else 'Не предоставлены.'}
 
-Создай план в формате JSON:
-{{
-    "ideas": [
-        {{
-            "title": "Заголовок",
-            "hook": "Хук",
-            "format": "video/reel/carousel",
-            "platform": "tiktok/instagram/youtube",
-            "description": "Описание",
-            "key_points": ["пункт1", "пункт2", "пункт3"],
-            "hashtags": ["#tag1", "#tag2"],
-            "estimated_duration": "30 сек",
-            "suggested_day": "Понедельник" или номер дня,
-            "inspiration_source": "На основе анализа конкурентов"
-        }}
-    ]
-}}"""
+    Анализ конкурентов:
+    {json.dumps(analysis, ensure_ascii=False) if analysis else 'Не предоставлен.'}
 
-        response = await openai_service.client.chat.completions.create(
-            model=openai_service.model,
-            messages=[
-                {"role": "developer", "content": system},
-                {"role": "user", "content": (
-                    f"Ниша: {niche}\n"
-                    f"Период: {period} ({days} дней)\n"
-                    f"Платформы: {', '.join(platforms)}\n"
-                    f"Постов в день на платформу: {posts_per_day}\n"
-                    f"Всего нужно идей: {total_posts}"
-                )}
-            ],
-            max_tokens=6000,
-            response_format={"type": "json_object"}
-        )
-        
-        result = json.loads(response.choices[0].message.content)
-        ideas_data = result.get("ideas", []) if isinstance(result, dict) else result
-        
-        ideas = []
-        for item in ideas_data:
-            ideas.append(ContentIdea(
-                title=item.get("title", ""),
-                hook=item.get("hook", ""),
-                format=item.get("format", "video"),
-                platform=item.get("platform", ""),
-                description=item.get("description", ""),
-                key_points=item.get("key_points", []),
-                hashtags=item.get("hashtags", []),
-                estimated_duration=item.get("estimated_duration", ""),
-                inspiration_source=item.get("inspiration_source", "")
-            ))
-        
-        from datetime import datetime
-        return ContentPlan(
-            topic=niche,
-            period=period,
-            ideas=ideas,
-            created_at=datetime.now().isoformat()
-        )
-    
+    Создай план в формате JSON:
+    {{
+        "ideas": [
+            {{
+                "title": "Заголовок",
+                "hook": "Хук",
+                "format": "video/reel/carousel",
+                "platform": "tiktok/instagram/youtube",
+                "description": "Описание",
+                "key_points": ["пункт1", "пункт2", "пункт3"],
+                "hashtags": ["#tag1", "#tag2"],
+                "estimated_duration": "30 сек",
+                "suggested_day": "Понедельник" или номер дня,
+                "inspiration_source": "На основе анализа конкурентов"
+            }}
+        ]
+    }}"""
+
+            response = await openai_service.client.chat.completions.create(
+                model=openai_service.model,
+                messages=[
+                    {"role": "developer", "content": system},
+                    {"role": "user", "content": (
+                        f"Ниша: {niche}\n"
+                        f"Период: {period} ({days} дней)\n"
+                        f"Платформы: {', '.join(platforms)}\n"
+                        f"Постов в день на платформу: {posts_per_day}\n"
+                        f"Всего нужно идей: {total_posts}"
+                    )}
+                ],
+                max_tokens=6000,
+                response_format={"type": "json_object"}
+            )
+            
+            result = json.loads(response.choices[0].message.content)
+            ideas_data = result.get("ideas", []) if isinstance(result, dict) else result
+            
+            ideas = []
+            for item in ideas_data:
+                ideas.append(ContentIdea(
+                    title=item.get("title", ""),
+                    hook=item.get("hook", ""),
+                    format=item.get("format", "video"),
+                    platform=item.get("platform", ""),
+                    description=item.get("description", ""),
+                    key_points=item.get("key_points", []),
+                    hashtags=item.get("hashtags", []),
+                    estimated_duration=item.get("estimated_duration", ""),
+                    inspiration_source=item.get("inspiration_source", "")
+                ))
+            
+            from datetime import datetime
+            return ContentPlan(
+                topic=niche,
+                period=period,
+                ideas=ideas,
+                created_at=datetime.now().isoformat()
+            )
+
     async def generate_script_from_idea(self, idea: ContentIdea) -> str:
         """Генерирует сценарий по идее"""
         if not openai_service.is_available():
