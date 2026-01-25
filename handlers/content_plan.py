@@ -1,3 +1,4 @@
+
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
@@ -79,19 +80,12 @@ async def start_content_plan_flow(callback: CallbackQuery, state: FSMContext):
     kb_files = openai_service._load_files_from_dir(openai_service._load_knowledge_base and "knowledge_base" or "")
     comp_content = openai_service._load_competitors_content()
     
-    info_text = ""
-    if comp_content:
-        info_text = "\n\n✅ Загружен контент конкурентов — будет использован для анализа."
-    else:
-        info_text = "\n\n💡 Совет: загрузите контент конкурентов в базу знаний для лучших результатов."
     
     await state.set_state(ContentPlanStates.entering_niche)
     await callback.message.edit_text(
         "📅 <b>Генерация контент-плана</b>\n\n"
         "План создаётся на основе:\n"
-        "• Вашей базы знаний (информация о продукте)\n"
-        "• Анализа контента конкурентов (если загружен)\n"
-        f"{info_text}\n\n"
+        "• Вашей базы знаний (информация о продукте)\n\n"
         "Введите вашу нишу или тематику контента:\n\n"
         "💡 Примеры:\n"
         "• <i>Фитнес для начинающих</i>\n"
@@ -202,15 +196,12 @@ async def generate_plan(callback: CallbackQuery, state: FSMContext):
     
     # Проверяем наличие контента конкурентов
     comp_content = openai_service._load_competitors_content()
-    comp_info = "✅ Используется" if comp_content else "❌ Не загружен"
-    
     await callback.message.edit_text(
         f"⏳ Генерирую контент-план...\n\n"
         f"📝 Ниша: {niche}\n"
         f"📆 Период: {days} дней\n"
         f"📱 Платформ: {len(platforms)}\n"
         f"📊 Всего идей: ~{total}\n"
-        f"🎯 Анализ конкурентов: {comp_info}"
     )
     
     try:
