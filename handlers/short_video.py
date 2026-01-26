@@ -14,6 +14,9 @@ from services.task_tracker import task_tracker, VideoTask
 
 router = Router()
 
+# Платформы для анализа конкурентов (для коротких видео используем TikTok, Instagram, YouTube)
+VIDEO_PLATFORMS = ["tiktok", "instagram", "youtube"]
+
 @router.callback_query(F.data == "menu:short_video")
 async def start_video_flow(callback: CallbackQuery, state: FSMContext):
     """Начало создания короткого видео"""
@@ -46,8 +49,8 @@ async def select_model(callback: CallbackQuery, state: FSMContext):
     
     await callback.message.edit_text(
         "📹 <b>Выберите режим генерации:</b>\n\n"
-        "📝 <b>Текст → Видео</b> — генерация по текстовому описанию\n"
-        "🖼 <b>Изображение → Видео</b> — анимация изображения",
+        "📝 <b>Текст → Видео</b>\n"
+        "🖼 <b>Изображение → Видео</b>",
         parse_mode="HTML",
         reply_markup=video_mode_kb()
     )
@@ -72,9 +75,8 @@ async def select_mode(callback: CallbackQuery, state: FSMContext):
     if mode == "t2v":
         await state.set_state(ShortVideoStates.waiting_prompt)
         await callback.message.edit_text(
-            "✍️ <b>Введите описание видео</b>\n\n"
-            "Опишите, что должно происходить в видео.\n\n"
-            "💡 Пример: <i>Золотой закат над океаном, волны мягко бьются о берег</i>",
+            "✍️ <b>Опишите идею видео кратко</b>\n\n"
+            "Опишите суть — промпт будет автоматически улучшен\n",
             parse_mode="HTML",
             reply_markup=cancel_kb()
         )
@@ -90,31 +92,75 @@ async def select_mode(callback: CallbackQuery, state: FSMContext):
 
 @router.message(ShortVideoStates.waiting_prompt)
 async def process_prompt(message: Message, state: FSMContext):
-    """Получение промпта"""
-    prompt = message.text.strip()
-    await state.update_data(original_prompt=prompt)
+    """Получение промпта и его улучшение на основе базы знаний и конкурентов"""
+    user_idea = message.text.strip()
+    await state.update_data(original_prompt=user_idea)
     
-    # Улучшаем промпт если доступен OpenAI
-    if openai_service.is_available():
-        await message.answer("⏳ Улучшаю промпт...")
+    # Проверяем наличие базы конкурентов
+    import os
+    import json
+    COMPETITORS_FILE = os.path.join("knowledge_base", "competitors.json")
+    
+    has_competitors = False
+    if os.path.exists(COMPETITORS_FILE):
         try:
-            enhanced = await openai_service.enhance_video_prompt(prompt)
+            with open(COMPETITORS_FILE, 'r', encoding='utf-8') as f:
+                competitors = json.load(f)
+            for platform in VIDEO_PLATFORMS:
+                if competitors.get(platform, []):
+                    has_competitors = True
+                    break
+        except:
+            pass
+    
+    # Улучшаем промпт через OpenAI с учетом базы знаний и конкурентов
+    if openai_service.is_available():
+        status_parts = ["⏳ Улучшаю промпт..."]
+        status_parts.append("\n📚 База знаний: учтена")
+        if has_competitors:
+            status_parts.append("🎯 Конкуренты: анализирую")
+        
+        await message.answer("".join(status_parts))
+        
+        try:
+            enhanced = await openai_service.enhance_video_prompt(
+                user_prompt=user_idea,
+                platforms=VIDEO_PLATFORMS
+            )
             await state.update_data(prompt=enhanced)
             await state.set_state(ShortVideoStates.selecting_aspect)
+            
+            # Показываем улучшенный промпт с информацией об источниках
+            info_text = "✨ <b>Промпт улучшен!</b>\n\n"
+            if has_competitors:
+                info_text += "✅ Учтён анализ конкурентов\n"
+            info_text += "\n✅ Интегрирована база знаний\n\n"
+            info_text += f"<b>Финальный промпт:</b>\n<code>{enhanced}</code>\n\n"
+            info_text += "Выберите соотношение сторон:"
+            
             await message.answer(
-                f"✨ <b>Улучшенный промпт:</b>\n\n<i>{enhanced}</i>\n\n"
-                "Выберите соотношение сторон:",
+                info_text,
                 parse_mode="HTML",
                 reply_markup=aspect_ratio_kb()
             )
-        except Exception:
-            await state.update_data(prompt=prompt)
+        except Exception as e:
+            # Fallback на исходный промпт
+            await state.update_data(prompt=user_idea)
             await state.set_state(ShortVideoStates.selecting_aspect)
-            await message.answer("Выберите соотношение сторон:", reply_markup=aspect_ratio_kb())
+            await message.answer(
+                f"⚠️ Не удалось улучшить промпт: {e}\n\n"
+                "Использую исходную идею. Выберите соотношение сторон:",
+                reply_markup=aspect_ratio_kb()
+            )
     else:
-        await state.update_data(prompt=prompt)
+        # Если OpenAI недоступен, используем исходный промпт
+        await state.update_data(prompt=user_idea)
         await state.set_state(ShortVideoStates.selecting_aspect)
-        await message.answer("Выберите соотношение сторон:", reply_markup=aspect_ratio_kb())
+        await message.answer(
+            "⚠️ OpenAI недоступен - промпт не будет улучшен.\n\n"
+            "Выберите соотношение сторон:",
+            reply_markup=aspect_ratio_kb()
+        )
 
 @router.message(ShortVideoStates.waiting_image, F.photo)
 async def process_image(message: Message, state: FSMContext):
@@ -128,7 +174,8 @@ async def process_image(message: Message, state: FSMContext):
     
     await message.answer(
         "✅ Изображение получено!\n\n"
-        "✍️ Теперь опишите, как должно анимироваться изображение:",
+        "✍️ Теперь кратко опишите, как должно анимироваться изображение:\n\n",
+        parse_mode="HTML",
         reply_markup=cancel_kb()
     )
 
@@ -154,9 +201,17 @@ async def select_aspect_and_generate(callback: CallbackQuery, state: FSMContext)
     mode = data["mode"]
     prompt = data["prompt"]
     image_url = data.get("image_url")
+    original_idea = data.get("original_prompt", prompt)
     
     await state.set_state(ShortVideoStates.generating)
-    await callback.message.edit_text("🎬 Запускаю генерацию видео...")
+    
+    # Показываем информацию о запуске
+    info_parts = ["🎬 Запускаю генерацию видео...\n"]
+    info_parts.append(f"📝 Исходная идея: {original_idea[:100]}\n")
+    if prompt != original_idea:
+        info_parts.append("✨ Промпт улучшен на основе базы знаний и конкурентов")
+    
+    await callback.message.edit_text("".join(info_parts))
     
     try:
         if model == "sora2":
@@ -191,14 +246,16 @@ async def select_aspect_and_generate(callback: CallbackQuery, state: FSMContext)
             user_id=callback.from_user.id,
             model=model,
             created_at=datetime.now(),
-            prompt=prompt
+            prompt=original_idea  # Сохраняем оригинальную идею для логирования
         )
         task_tracker.add_task(video_task)
         
         model_name = {"sora2": "Sora 2", "veo3_fast": "Veo 3.1 Fast", "veo3": "Veo 3.1 Quality"}
+        
         await callback.message.edit_text(
             f"✅ Генерация запущена!\n\n"
             f"🎬 Модель: {model_name.get(model, model)}\n"
+            f"📝 Идея: {original_idea[:100]}\n"
             f"🆔 Task ID: <code>{task_id}</code>\n\n"
             f"⏳ Генерация занимает 2-15 минут.\n"
             f"📩 Видео придёт автоматически, когда будет готово!",

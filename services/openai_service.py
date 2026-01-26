@@ -270,27 +270,74 @@ class OpenAIService:
         )
         return response.choices[0].message.content
     
-    async def enhance_video_prompt(self, user_prompt: str) -> str:
-        """Улучшает промпт для генерации видео"""
+    async def enhance_video_prompt(self, user_prompt: str, platforms: list[str] = None) -> str:
+        """
+        Улучшает промпт для генерации видео на основе базы знаний и конкурентов
+        
+        Args:
+            user_prompt: Краткая идея от пользователя
+            platforms: Платформы для анализа конкурентов (по умолчанию все)
+        """
         if not self.client:
             return user_prompt
         
         kb_content = self._load_knowledge_base()
-        system = f"""Улучши промпт для AI-генерации видео.
-Сделай его детальным, добавь описание движения, освещения, стиля.
-Используй информацию из базы знаний если релевантно.
-Отвечай ТОЛЬКО улучшенным промптом на английском.
+        comp_content = self._load_competitors_content(platforms)
+        
+        # Анализируем контент конкурентов если есть
+        competitors_insights = ""
+        if comp_content:
+            try:
+                analysis = await self.analyze_competitors_content(platforms=platforms)
+                insights_parts = []
+                
+                if analysis.get("content_formats"):
+                    insights_parts.append(f"Популярные форматы: {', '.join(analysis['content_formats'][:3])}")
+                if analysis.get("successful_hooks"):
+                    insights_parts.append(f"Эффективные хуки: {', '.join(analysis['successful_hooks'][:2])}")
+                if analysis.get("trending_topics"):
+                    insights_parts.append(f"Трендовые темы: {', '.join(analysis['trending_topics'][:3])}")
+                
+                if insights_parts:
+                    competitors_insights = "\n\nИНСАЙТЫ ИЗ АНАЛИЗА КОНКУРЕНТОВ:\n" + "\n".join(f"- {i}" for i in insights_parts)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Failed to analyze competitors: {e}")
+        
+        system = f"""Ты — эксперт по созданию вирусного видеоконтента для TikTok, Instagram Reels, YouTube Shorts.
 
-КОНТЕКСТ (база знаний):
-{kb_content[:2000] if kb_content else 'Нет данных.'}"""
+ТВОЯ ЗАДАЧА: Преобразовать краткую идею пользователя в детальный промпт для AI-генерации видео.
+
+КОНТЕКСТ О ПРОДУКТЕ/БРЕНДЕ (база знаний):
+{kb_content[:2000] if kb_content else 'Не предоставлен.'}
+
+ССЫЛКИ НА КОНКУРЕНТОВ:
+{comp_content[:2000] if comp_content else 'Не предоставлены.'}{competitors_insights}
+
+ПРАВИЛА СОЗДАНИЯ ПРОМПТА:
+1. Если идея связана с продуктом из базы знаний - ОБЯЗАТЕЛЬНО интегрируй его в видео
+2. Используй инсайты конкурентов для создания трендового контента
+3. Добавь конкретные детали:
+   - Визуальный стиль и атмосферу
+   - Движение камеры (pan, zoom, tracking shot, etc.)
+   - Освещение (golden hour, dramatic, soft natural light, etc.)
+   - Динамику действия
+   - Настроение и эмоции
+4. Промпт должен быть на АНГЛИЙСКОМ языке
+5. Длина: 50-150 слов
+6. Стиль: детальный, кинематографичный
+
+ВАЖНО: Если в идее НЕ упомянут продукт, но он есть в базе знаний - найди способ органично включить его в сцену.
+
+Отвечай ТОЛЬКО улучшенным промптом, без пояснений."""
 
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system},
-                {"role": "user", "content": user_prompt}
+                {"role": "user", "content": f"Краткая идея: {user_prompt}"}
             ],
-            max_tokens=500
+            max_tokens=600
         )
         return response.choices[0].message.content
     
