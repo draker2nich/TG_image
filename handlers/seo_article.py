@@ -10,41 +10,83 @@ from services.google_service import google_service
 
 router = Router()
 
+# ID папки для статей на Google Drive
+SEO_ARTICLES_FOLDER_ID = "1WDx-R5yz0nmTIHbLT4k_b5OzfTRwa8DH"
+
 async def save_article_to_docx(article: str, seo_title: str = "") -> bytes:
-    """Сохраняет статью в формате DOCX"""
+    """Сохраняет статью в формате DOCX с правильным форматированием"""
     from docx import Document
-    from docx.shared import Pt
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
     import io
+    import re
     
     doc = Document()
     
-    # Заголовок
+    # Заголовок H1
     if seo_title:
         title = doc.add_heading(seo_title, 0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
     # Разбираем контент по строкам
     lines = article.split('\n')
-    for line in lines:
-        line = line.strip()
+    i = 0
+    
+    while i < len(lines):
+        line = lines[i].strip()
+        i += 1
+        
         if not line:
             continue
         
         # Заголовки H2
         if line.startswith('## '):
-            doc.add_heading(line[3:], level=2)
+            heading = doc.add_heading(line[3:], level=2)
+            
         # Заголовки H3
         elif line.startswith('### '):
-            doc.add_heading(line[4:], level=3)
+            heading = doc.add_heading(line[4:], level=3)
+            
         # Заголовок H1 (пропускаем если уже добавили seo_title)
-        elif line.startswith('# ') and not seo_title:
-            doc.add_heading(line[2:], level=1)
         elif line.startswith('# '):
+            if not seo_title:
+                doc.add_heading(line[2:], level=1)
             continue
+            
         # Обычный текст
         else:
-            # Убираем markdown bold/italic
-            clean_line = line.replace('**', '').replace('*', '').replace('__', '')
-            doc.add_paragraph(clean_line)
+            # Убираем markdown форматирование
+            clean_line = line
+            
+            # Обрабатываем списки
+            if line.startswith('- ') or line.startswith('* '):
+                clean_line = line[2:].strip()
+                # Убираем markdown bold/italic
+                clean_line = re.sub(r'\*\*(.+?)\*\*', r'\1', clean_line)
+                clean_line = re.sub(r'\*(.+?)\*', r'\1', clean_line)
+                clean_line = re.sub(r'__(.+?)__', r'\1', clean_line)
+                
+                para = doc.add_paragraph(clean_line, style='List Bullet')
+                
+            # Нумерованные списки
+            elif re.match(r'^\d+\.\s', line):
+                clean_line = re.sub(r'^\d+\.\s', '', line).strip()
+                # Убираем markdown bold/italic
+                clean_line = re.sub(r'\*\*(.+?)\*\*', r'\1', clean_line)
+                clean_line = re.sub(r'\*(.+?)\*', r'\1', clean_line)
+                clean_line = re.sub(r'__(.+?)__', r'\1', clean_line)
+                
+                para = doc.add_paragraph(clean_line, style='List Number')
+                
+            # Обычный параграф
+            else:
+                # Убираем markdown bold/italic
+                clean_line = re.sub(r'\*\*(.+?)\*\*', r'\1', clean_line)
+                clean_line = re.sub(r'\*(.+?)\*', r'\1', clean_line)
+                clean_line = re.sub(r'__(.+?)__', r'\1', clean_line)
+                
+                para = doc.add_paragraph(clean_line)
+                para.paragraph_format.space_after = Pt(6)
     
     # Сохраняем в байты
     buffer = io.BytesIO()
@@ -53,7 +95,7 @@ async def save_article_to_docx(article: str, seo_title: str = "") -> bytes:
     return buffer.getvalue()
 
 async def upload_to_google(content: bytes, filename: str, title: str) -> str:
-    """Загружает на Google Drive и логирует"""
+    """Загружает статью на Google Drive в папку для статей"""
     try:
         if not await google_service.initialize():
             return ""
@@ -61,7 +103,8 @@ async def upload_to_google(content: bytes, filename: str, title: str) -> str:
         result = await google_service.upload_file_to_drive(
             file_content=content,
             file_name=filename,
-            mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            folder_id=SEO_ARTICLES_FOLDER_ID  # Папка для статей
         )
         
         if result.success:
@@ -91,10 +134,7 @@ async def start_seo_flow(callback: CallbackQuery, state: FSMContext):
     
     await state.set_state(SEOArticleStates.waiting_topic)
     await callback.message.edit_text(
-        "📝 <b>Создание SEO-статьи</b>\n\n"
-        "Статья будет написана на основе вашей базы знаний (.docx файлов).\n\n"
-        "Введите тему статьи:\n\n"
-        "💡 Пример: <i>Как выбрать CRM-систему для малого бизнеса</i>",
+        "<b>Создание SEO-статьи</b>\n\n",
         parse_mode="HTML",
         reply_markup=cancel_kb()
     )
@@ -119,7 +159,7 @@ async def process_topic_and_generate(message: Message, state: FSMContext):
         # 3. Генерируем полную статью
         article = await openai_service.generate_seo_article(topic, keywords, outline, seo_title)
         
-        # 4. Сохраняем в DOCX
+        # 4. Сохраняем в DOCX с улучшенным форматированием
         docx_content = await save_article_to_docx(article, seo_title)
         
         # 5. Формируем имя файла
@@ -127,7 +167,7 @@ async def process_topic_and_generate(message: Message, state: FSMContext):
         safe_topic = "".join(c if c.isalnum() or c in " -_" else "" for c in topic)[:30]
         filename = f"SEO_{safe_topic.replace(' ', '_')}_{timestamp}.docx"
         
-        # 6. Загружаем на Google Drive
+        # 6. Загружаем на Google Drive в папку для статей
         google_url = await upload_to_google(docx_content, filename, seo_title)
         
         # 7. Отправляем пользователю

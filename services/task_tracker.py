@@ -7,6 +7,10 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+# ID папок на Google Drive для разных типов контента
+AVATAR_VIDEOS_FOLDER_ID = "1euXl3Kfe0JJLWQCXUjRwWYFIoB4Hh1Un"  # Видео с аватаром + сами аватары
+SHORT_VIDEOS_FOLDER_ID = "1r6arLQJo88biINNkRnFwksAKJNDkrJPr"  # Видео от Sora/Veo
+
 @dataclass
 class VideoTask:
     task_id: str
@@ -19,6 +23,7 @@ class VideoTask:
     result_url: Optional[str] = None
     error: Optional[str] = None
     subtitles_data: Optional[dict] = field(default=None)  # {"srt": ..., "ass": ...}
+    avatar_image_url: Optional[str] = None  # URL аватара для загрузки на Drive
 
 class TaskTracker:
     def __init__(self):
@@ -137,7 +142,7 @@ class TaskTracker:
                 await asyncio.sleep(10)
     
     async def _upload_to_google(self, task: VideoTask, video_url: str) -> Optional[str]:
-        """Загружает видео на Google Drive"""
+        """Загружает видео на Google Drive в правильную папку"""
         from services.google_service import google_service
         
         try:
@@ -152,14 +157,22 @@ class TaskTracker:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             file_name = f"{model_names.get(task.model, 'Video')}_{timestamp}.mp4"
             
+            # Определяем папку в зависимости от типа контента
+            if task.model == "kling_motion":
+                folder_id = AVATAR_VIDEOS_FOLDER_ID  # Видео с аватаром
+                content_type = "video_avatar"
+            else:
+                folder_id = SHORT_VIDEOS_FOLDER_ID  # Видео от Sora/Veo
+                content_type = "short_video"
+            
             result = await google_service.upload_from_url(
                 url=video_url,
                 file_name=file_name,
-                mime_type="video/mp4"
+                mime_type="video/mp4",
+                folder_id=folder_id
             )
             
             if result.success:
-                content_type = "video_avatar" if task.model == "kling_motion" else "short_video"
                 await google_service.log_content(
                     content_type=content_type,
                     title=task.prompt[:100] if task.prompt else file_name,
@@ -171,6 +184,34 @@ class TaskTracker:
             return None
         except Exception as e:
             logger.error(f"Failed to upload to Google: {e}")
+            return None
+    
+    async def _upload_avatar_to_google(self, task: VideoTask) -> Optional[str]:
+        """Загружает аватар на Google Drive в ту же папку что и видео"""
+        from services.google_service import google_service
+        
+        if not task.avatar_image_url:
+            return None
+        
+        try:
+            if not await google_service.initialize():
+                return None
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_name = f"Avatar_{timestamp}.jpg"
+            
+            result = await google_service.upload_from_url(
+                url=task.avatar_image_url,
+                file_name=file_name,
+                mime_type="image/jpeg",
+                folder_id=AVATAR_VIDEOS_FOLDER_ID  # Та же папка что и видео с аватаром
+            )
+            
+            if result.success:
+                return result.file_url
+            return None
+        except Exception as e:
+            logger.error(f"Failed to upload avatar to Google: {e}")
             return None
     
     async def _burn_subtitles(self, task: VideoTask, video_url: str) -> Optional[bytes]:
@@ -244,9 +285,18 @@ class TaskTracker:
                 )
                 video_with_subs = await self._burn_subtitles(task, video_url)
             
-            # Загружаем на Google Drive
+            # Загружаем видео на Google Drive
             google_url = await self._upload_to_google(task, video_url)
-            google_info = f"\n☁️ <a href='{google_url}'>Google Drive</a>" if google_url else ""
+            google_info = f"\n☁️ <a href='{google_url}'>Видео на Google Drive</a>" if google_url else ""
+            
+            # Загружаем аватар на Google Drive (если это Motion Control)
+            avatar_google_url = None
+            if task.model == "kling_motion" and task.avatar_image_url:
+                avatar_google_url = await self._upload_avatar_to_google(task)
+            
+            avatar_info = ""
+            if avatar_google_url:
+                avatar_info = f"\n🖼 <a href='{avatar_google_url}'>Аватар на Google Drive</a>"
             
             subtitle_info = ""
             if has_subtitles:
@@ -267,7 +317,7 @@ class TaskTracker:
                     caption=(
                         f"✅ <b>Видео с субтитрами готово!</b>\n\n"
                         f"🎬 {model_names.get(task.model, task.model)}\n"
-                        f"🆔 <code>{task.task_id}</code>{subtitle_info}{google_info}"
+                        f"🆔 <code>{task.task_id}</code>{subtitle_info}{google_info}{avatar_info}"
                     ),
                     parse_mode="HTML"
                 )
@@ -279,7 +329,7 @@ class TaskTracker:
                         caption=(
                             f"✅ <b>Видео готово!</b>\n\n"
                             f"🎬 {model_names.get(task.model, task.model)}\n"
-                            f"🆔 <code>{task.task_id}</code>{subtitle_info}{google_info}"
+                            f"🆔 <code>{task.task_id}</code>{subtitle_info}{google_info}{avatar_info}"
                         ),
                         parse_mode="HTML"
                     )
@@ -290,7 +340,7 @@ class TaskTracker:
                             f"✅ <b>Видео готово!</b>\n\n"
                             f"🎬 {model_names.get(task.model, task.model)}\n"
                             f"🔗 <a href='{video_url}'>Скачать видео</a>\n"
-                            f"🆔 <code>{task.task_id}</code>{subtitle_info}{google_info}"
+                            f"🆔 <code>{task.task_id}</code>{subtitle_info}{google_info}{avatar_info}"
                         ),
                         parse_mode="HTML"
                     )

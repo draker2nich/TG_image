@@ -856,7 +856,8 @@ async def process_orientation_and_generate(callback: CallbackQuery, state: FSMCo
             user_id=callback.from_user.id,
             model="kling_motion",
             created_at=datetime.now(),
-            prompt=data.get("topic", "Motion Control video")
+            prompt=data.get("topic", "Motion Control video"),
+            avatar_image_url=avatar_url
         )
         task_tracker.add_task(video_task)
         

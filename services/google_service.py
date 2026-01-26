@@ -126,7 +126,8 @@ class GoogleService:
         self,
         url: str,
         file_name: str,
-        mime_type: str = "video/mp4"
+        mime_type: str = "video/mp4",
+        folder_id: Optional[str] = None
     ) -> UploadResult:
         """Скачивает файл по URL и загружает на Drive"""
         try:
@@ -136,7 +137,7 @@ class GoogleService:
                         return UploadResult(success=False, error=f"Download failed: {resp.status}")
                     content = await resp.read()
             
-            return await self.upload_file_to_drive(content, file_name, mime_type)
+            return await self.upload_file_to_drive(content, file_name, mime_type, folder_id=folder_id)
         except Exception as e:
             return UploadResult(success=False, error=str(e))
     
