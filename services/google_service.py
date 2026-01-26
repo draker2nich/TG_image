@@ -25,17 +25,12 @@ class UploadResult:
     error: Optional[str] = None
 
 @dataclass
-class SheetRow:
-    date: str
-    content_type: str
-    title: str
-    status: str
-    file_url: str = ""
-    platform: str = ""
-    notes: str = ""
-    hook: str = ""
-    format: str = ""
-    description: str = ""
+class ContentPlanRow:
+    """Строка контент-плана"""
+    topic: str
+    category: str  # пост, статья, видео с аватаром, видео от сора/вео
+    platform: str  # инст, тикток, ютуб
+    status: str  # Сгенерировано / Не сгенерировано
 
 class GoogleService:
     def __init__(self):
@@ -145,8 +140,83 @@ class GoogleService:
         except Exception as e:
             return UploadResult(success=False, error=str(e))
     
-    async def add_row_to_sheet(self, row: SheetRow) -> bool:
-        """Добавляет строку в Google Sheets"""
+    async def init_sheet_headers(self) -> bool:
+        """Инициализирует заголовки для контент-плана"""
+        if not await self.initialize():
+            return False
+        
+        if not self.spreadsheet_id:
+            return False
+        
+        try:
+            loop = asyncio.get_event_loop()
+            
+            # Проверяем существующие заголовки
+            result = await loop.run_in_executor(
+                None,
+                lambda: self.sheets_service.spreadsheets().values().get(
+                    spreadsheetId=self.spreadsheet_id,
+                    range='A1:D1'
+                ).execute()
+            )
+            
+            values = result.get('values')
+            if values and len(values[0]) >= 4:
+                # Заголовки уже есть
+                return True
+            
+            # Создаём новые заголовки
+            headers = [['Тема', 'Категория', 'Платформа', 'Статус']]
+            
+            await loop.run_in_executor(
+                None,
+                lambda: self.sheets_service.spreadsheets().values().update(
+                    spreadsheetId=self.spreadsheet_id,
+                    range='A1:D1',
+                    valueInputOption='USER_ENTERED',
+                    body={'values': headers}
+                ).execute()
+            )
+            
+            # Форматируем заголовки (жирный шрифт)
+            await loop.run_in_executor(
+                None,
+                lambda: self.sheets_service.spreadsheets().batchUpdate(
+                    spreadsheetId=self.spreadsheet_id,
+                    body={
+                        "requests": [
+                            {
+                                "repeatCell": {
+                                    "range": {
+                                        "sheetId": 0,
+                                        "startRowIndex": 0,
+                                        "endRowIndex": 1
+                                    },
+                                    "cell": {
+                                        "userEnteredFormat": {
+                                            "textFormat": {"bold": True},
+                                            "backgroundColor": {
+                                                "red": 0.9,
+                                                "green": 0.9,
+                                                "blue": 0.9
+                                            }
+                                        }
+                                    },
+                                    "fields": "userEnteredFormat(textFormat,backgroundColor)"
+                                }
+                            }
+                        ]
+                    }
+                ).execute()
+            )
+            
+            return True
+        except Exception as e:
+            print(f"Headers error: {e}")
+            return False
+    
+    async def add_content_plan_row(self, row: ContentPlanRow) -> bool:
+        """Добавляет строку в контент-план"""
         if not await self.initialize():
             return False
         
@@ -155,9 +225,10 @@ class GoogleService:
         
         try:
             values = [[
-                row.date, row.content_type, row.title,
-                row.status, row.file_url, row.platform, row.notes,
-                row.hook, row.format, row.description
+                row.topic,
+                row.category,
+                row.platform,
+                row.status
             ]]
             
             loop = asyncio.get_event_loop()
@@ -165,7 +236,7 @@ class GoogleService:
                 None,
                 lambda: self.sheets_service.spreadsheets().values().append(
                     spreadsheetId=self.spreadsheet_id,
-                    range='A:J',
+                    range='A:D',
                     valueInputOption='USER_ENTERED',
                     insertDataOption='INSERT_ROWS',
                     body={'values': values}
@@ -176,8 +247,28 @@ class GoogleService:
             print(f"Sheet error: {e}")
             return False
     
-    async def init_sheet_headers(self) -> bool:
-        """Инициализирует заголовки"""
+    async def log_content_plan_idea(
+        self,
+        topic: str,
+        category: Literal["пост", "статья", "видео с аватаром", "видео от сора/вео"],
+        platform: Literal["инст", "тикток", "ютуб", "блог"],
+        status: Literal["Сгенерировано", "Не сгенерировано"] = "Не сгенерировано"
+    ) -> bool:
+        """Логирует идею контент-плана в Google Sheets"""
+        row = ContentPlanRow(
+            topic=topic,
+            category=category,
+            platform=platform,
+            status=status
+        )
+        return await self.add_content_plan_row(row)
+    
+    async def update_content_status(
+        self,
+        topic: str,
+        status: Literal["Сгенерировано", "Не сгенерировано"]
+    ) -> bool:
+        """Обновляет статус контента по теме"""
         if not await self.initialize():
             return False
         
@@ -186,58 +277,38 @@ class GoogleService:
         
         try:
             loop = asyncio.get_event_loop()
+            
+            # Получаем все данные
             result = await loop.run_in_executor(
                 None,
                 lambda: self.sheets_service.spreadsheets().values().get(
                     spreadsheetId=self.spreadsheet_id,
-                    range='A1:J1'
+                    range='A:D'
                 ).execute()
             )
             
-            values = result.get('values')
-            if values and len(values[0]) >= 10:
-                return True
+            values = result.get('values', [])
             
-            headers = [['Дата', 'Тип контента', 'Название', 'Статус', 'Ссылка', 'Платформа', 'Примечания', 'Хук', 'Формат', 'Описание']]
+            # Ищем строку с нужной темой
+            for i, row in enumerate(values):
+                if i == 0:  # Пропускаем заголовок
+                    continue
+                if row and row[0] == topic:
+                    # Обновляем статус (столбец D)
+                    await loop.run_in_executor(
+                        None,
+                        lambda: self.sheets_service.spreadsheets().values().update(
+                            spreadsheetId=self.spreadsheet_id,
+                            range=f'D{i+1}',
+                            valueInputOption='USER_ENTERED',
+                            body={'values': [[status]]}
+                        ).execute()
+                    )
+                    return True
             
-            await loop.run_in_executor(
-                None,
-                lambda: self.sheets_service.spreadsheets().values().update(
-                    spreadsheetId=self.spreadsheet_id,
-                    range='A1:J1',
-                    valueInputOption='USER_ENTERED',
-                    body={'values': headers}
-                ).execute()
-            )
-            return True
-        except Exception as e:
-            print(f"Headers error: {e}")
             return False
-    
-    async def log_content(
-        self,
-        content_type: Literal["video_avatar", "seo_article", "short_video", "carousel", "content_plan"],
-        title: str,
-        status: str = "generated",
-        file_url: str = "",
-        platform: str = "",
-        notes: str = "",
-        hook: str = "",
-        format: str = "",
-        description: str = ""
-    ) -> bool:
-        row = SheetRow(
-            date=datetime.now().strftime("%Y-%m-%d %H:%M"),
-            content_type=content_type,
-            title=title,
-            status=status,
-            file_url=file_url,
-            platform=platform,
-            notes=notes,
-            hook=hook,
-            format=format,
-            description=description
-        )
-        return await self.add_row_to_sheet(row)
+        except Exception as e:
+            print(f"Update status error: {e}")
+            return False
 
 google_service = GoogleService()

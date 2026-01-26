@@ -1,4 +1,3 @@
-
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
@@ -12,6 +11,22 @@ from services.openai_service import openai_service
 from services.google_service import google_service
 
 router = Router()
+
+# Маппинг форматов на категории
+FORMAT_TO_CATEGORY = {
+    "video": "видео от сора/вео",
+    "reel": "видео от сора/вео",
+    "carousel": "пост",
+    "article": "статья"
+}
+
+# Маппинг платформ
+PLATFORM_MAPPING = {
+    "tiktok": "тикток",
+    "instagram": "инст",
+    "youtube": "ютуб",
+    "blog": "блог"
+}
 
 def period_kb():
     """Выбор периода"""
@@ -57,15 +72,6 @@ def posts_per_day_kb():
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="plan:back_platforms"))
     return builder.as_markup()
 
-def plan_actions_kb():
-    """Действия с готовым планом"""
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="📥 Скачать план", callback_data="plan:download"))
-    builder.row(InlineKeyboardButton(text="📝 Сценарий для идеи", callback_data="plan:script"))
-    builder.row(InlineKeyboardButton(text="🔄 Перегенерировать", callback_data="plan:regenerate"))
-    builder.row(InlineKeyboardButton(text="⬅️ Главное меню", callback_data="menu:main"))
-    return builder.as_markup()
-
 @router.callback_query(F.data == "menu:content_plan")
 async def start_content_plan_flow(callback: CallbackQuery, state: FSMContext):
     """Начало создания контент-плана"""
@@ -77,14 +83,9 @@ async def start_content_plan_flow(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     
-    # Проверяем наличие данных
-    kb_files = openai_service._load_files_from_dir(openai_service._load_knowledge_base and "knowledge_base" or "")
-    comp_content = openai_service._load_competitors_content()
-    
-    
     await state.set_state(ContentPlanStates.entering_niche)
     await callback.message.edit_text(
-        "<b>Генерация контент-плана</b>\n\n",
+        "<b>📅 Генерация контент-плана</b>\n\n",
         parse_mode="HTML",
         reply_markup=cancel_kb()
     )
@@ -185,12 +186,12 @@ async def generate_plan(callback: CallbackQuery, state: FSMContext):
     await state.update_data(posts_per_day=posts_per_day)
     await state.set_state(ContentPlanStates.generating)
     
-    await callback.answer()  # Отвечаем сразу, чтобы избежать таймаута
+    await callback.answer()
     
     days = 7 if period == "week" else 30
-    total = days * posts_per_day * len(platforms)
+    total_posts = days * posts_per_day * len(platforms)
     
-    # Проверяем наличие контента конкурентов для выбранных платформ
+    # Проверяем наличие контента конкурентов
     import os
     import json
     COMPETITORS_FILE = os.path.join("knowledge_base", "competitors.json")
@@ -200,7 +201,6 @@ async def generate_plan(callback: CallbackQuery, state: FSMContext):
         try:
             with open(COMPETITORS_FILE, 'r', encoding='utf-8') as f:
                 competitors = json.load(f)
-            # Проверяем есть ли ссылки для выбранных платформ
             for platform in platforms:
                 if competitors.get(platform, []):
                     has_competitors = True
@@ -213,7 +213,7 @@ async def generate_plan(callback: CallbackQuery, state: FSMContext):
         f"📝 Ниша: {niche}\n"
         f"📆 Период: {days} дней\n"
         f"📱 Платформ: {len(platforms)}\n"
-        f"📊 Всего идей: ~{total}\n"
+        f"📊 Всего идей: ~{total_posts}\n"
         f"{'🎯 Анализ конкурентов: включён' if has_competitors else '📋 Без анализа конкурентов'}\n"
     )
     
@@ -226,16 +226,16 @@ async def generate_plan(callback: CallbackQuery, state: FSMContext):
             use_competitors_analysis=has_competitors
         )
         
-        # Логируем идеи в Google Sheets
+        # Логируем идеи в Google Sheets с новой структурой
         for idea in plan.ideas:
-            await google_service.log_content(
-                content_type="content_plan",
-                title=idea.title,
-                status="generated",
-                platform=idea.platform,
-                hook=idea.hook,
-                format=idea.format,
-                description=idea.description
+            category = FORMAT_TO_CATEGORY.get(idea.format, "пост")
+            platform = PLATFORM_MAPPING.get(idea.platform, idea.platform)
+            
+            await google_service.log_content_plan_idea(
+                topic=idea.title,
+                category=category,
+                platform=platform,
+                status="Не сгенерировано"
             )
         
         # Сохраняем план
@@ -278,9 +278,10 @@ async def show_content_plan(message, plan, page: int = 0):
     for i, idea in enumerate(page_ideas, start + 1):
         p_emoji = platform_emoji.get(idea.platform, "📱")
         f_emoji = format_emoji.get(idea.format, "🎬")
+        category = FORMAT_TO_CATEGORY.get(idea.format, "пост")
         
         text += f"<b>{i}. {idea.title}</b>\n"
-        text += f"   {p_emoji} {idea.platform.title()} • {f_emoji} {idea.format}\n"
+        text += f"   {p_emoji} {idea.platform.title()} • {f_emoji} {category}\n"
         text += f"   🪝 <i>{idea.hook[:60]}...</i>\n" if len(idea.hook) > 60 else f"   🪝 <i>{idea.hook}</i>\n"
         text += f"   ⏱ {idea.estimated_duration}\n\n"
     
@@ -331,10 +332,15 @@ async def download_plan(callback: CallbackQuery, state: FSMContext):
     md_content += "---\n\n"
     
     for i, idea in enumerate(ideas, 1):
+        category = FORMAT_TO_CATEGORY.get(idea.get('format', ''), 'пост')
+        platform = PLATFORM_MAPPING.get(idea.get('platform', ''), idea.get('platform', ''))
+        
         md_content += f"## {i}. {idea.get('title', '')}\n\n"
-        md_content += f"- **Платформа:** {idea.get('platform', '').title()}\n"
+        md_content += f"- **Платформа:** {platform.title()}\n"
+        md_content += f"- **Категория:** {category}\n"
         md_content += f"- **Формат:** {idea.get('format', '')}\n"
-        md_content += f"- **Длительность:** {idea.get('estimated_duration', '')}\n\n"
+        md_content += f"- **Длительность:** {idea.get('estimated_duration', '')}\n"
+        md_content += f"- **Статус:** Не сгенерировано\n\n"
         md_content += f"### Хук\n{idea.get('hook', '')}\n\n"
         md_content += f"### Описание\n{idea.get('description', '')}\n\n"
         
@@ -523,7 +529,7 @@ async def regenerate_plan(callback: CallbackQuery, state: FSMContext):
     await state.set_state(ContentPlanStates.generating)
     await callback.message.edit_text("⏳ Перегенерирую контент-план...")
     
-    await callback.answer()  # Отвечаем сразу
+    await callback.answer()
     
     try:
         comp_content = openai_service._load_competitors_content()
@@ -538,14 +544,14 @@ async def regenerate_plan(callback: CallbackQuery, state: FSMContext):
         
         # Логируем идеи в Google Sheets
         for idea in plan.ideas:
-            await google_service.log_content(
-                content_type="content_plan",
-                title=idea.title,
-                status="generated",
-                platform=idea.platform,
-                hook=idea.hook,
-                format=idea.format,
-                description=idea.description
+            category = FORMAT_TO_CATEGORY.get(idea.format, "пост")
+            platform = PLATFORM_MAPPING.get(idea.platform, idea.platform)
+            
+            await google_service.log_content_plan_idea(
+                topic=idea.title,
+                category=category,
+                platform=platform,
+                status="Не сгенерировано"
             )
         
         await state.update_data(content_plan={
