@@ -343,6 +343,12 @@ async def back_to_review(callback: CallbackQuery, state: FSMContext):
     await show_carousel_content(callback.message, content)
     await callback.answer()
 
+def edit_slide_kb():
+    """Кнопки при редактировании слайда"""
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="⬅️ Назад к просмотру", callback_data="crs:back_from_edit"))
+    return builder.as_markup()
+
 @router.callback_query(CarouselStates.reviewing_content, F.data.startswith("crs:ed:"))
 async def start_edit_slide(callback: CallbackQuery, state: FSMContext):
     """Начало редактирования конкретного слайда"""
@@ -372,24 +378,30 @@ async def start_edit_slide(callback: CallbackQuery, state: FSMContext):
         "<code>Заголовок\n---\nКонтент слайда</code>\n\n"
         "Или отправьте только контент без заголовка.",
         parse_mode="HTML",
-        reply_markup=cancel_kb()
+        reply_markup=edit_slide_kb()
     )
     await callback.answer()
 
 @router.message(CarouselStates.editing_slide)
 async def process_slide_edit(message: Message, state: FSMContext):
     """Обработка редактирования слайда"""
+    import re
+    
     text = message.text.strip()
     data = await state.get_data()
     slide_num = data.get("editing_slide")
     content = data.get("carousel_content", {})
     slides = content.get("slides", [])
     
-    # Парсим ввод
-    if "---" in text:
-        parts = text.split("---", 1)
+    # Парсим ввод с гибким разделителем
+    separator_pattern = r'(?i)(?:---|—-|—-|---|\s*-\s*|\s*—\s*)'
+    match = re.search(separator_pattern, text)
+    
+    if match:
+        separator = match.group()
+        parts = re.split(separator_pattern, text, 1)
         new_title = parts[0].strip()
-        new_content = parts[1].strip()
+        new_content = parts[1].strip() if len(parts) > 1 else ""
     else:
         new_title = None
         new_content = text
@@ -552,15 +564,23 @@ async def send_carousel(message, images: list[tuple[int, str]], content: dict):
         
         await message.answer_media_group(media)
     
-    # Кнопки действий после отправки
+    # ИСПРАВЛЕНИЕ 2: Показываем полный текст всех слайдов после карусели
+    text_content = f"📝 <b>Текст карусели</b>\n\n"
+    text_content += f"🎯 Тема: {content.get('topic', '')}\n\n"
+    
+    for slide in slides:
+        type_emoji = {"cover": "🏠", "content": "📄", "cta": "🎯"}.get(slide.get("slide_type"), "📄")
+        text_content += f"<b>{type_emoji} Слайд {slide.get('slide_number')}: {slide.get('title')}</b>\n"
+        text_content += f"{slide.get('content', '')}\n\n"
+    
+    # Кнопки действий
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="🔄 Сгенерировать заново", callback_data="crs:retry"))
     builder.row(InlineKeyboardButton(text="⬅️ Главное меню", callback_data="menu:main"))
     
+    # Отправляем текст отдельным сообщением
     await message.answer(
-        f"✅ <b>Карусель готова!</b>\n\n"
-        f"📊 Сгенерировано слайдов: {len(images)}\n\n"
-        f"Сохраните изображения и загрузите в Telegram/Instagram.",
+        text_content,
         parse_mode="HTML",
         reply_markup=builder.as_markup()
     )
@@ -583,20 +603,24 @@ async def retry_generation(callback: CallbackQuery, state: FSMContext):
     await show_carousel_content(callback.message, content)
     await callback.answer()
 
-# Обработка отмены из любого состояния карусели
-@router.callback_query(CarouselStates.editing_slide, F.data == "cancel")
+# ИСПРАВЛЕНИЕ 1: Обработка отмены из состояния редактирования
+@router.callback_query(CarouselStates.editing_slide, F.data == "crs:back_from_edit")
 async def cancel_editing(callback: CallbackQuery, state: FSMContext):
-    """Отмена редактирования — возврат к просмотру"""
+    """Отмена редактирования — ВСЕГДА возврат к просмотру контента"""
     data = await state.get_data()
     content = data.get("carousel_content", {})
     
-    if content:
-        await state.set_state(CarouselStates.reviewing_content)
+    # Всегда возвращаемся к просмотру, даже если контент пустой
+    await state.set_state(CarouselStates.reviewing_content)
+    
+    if content and content.get("slides"):
         await show_carousel_content(callback.message, content)
     else:
-        await state.clear()
+        # Если контента нет (что странно), создаём пустое состояние
         await callback.message.edit_text(
-            "❌ Действие отменено.",
+            "⚠️ Контент не найден. Попробуйте начать заново.",
             reply_markup=back_to_menu_kb()
         )
+        await state.clear()
+    
     await callback.answer()
