@@ -33,6 +33,9 @@ class SheetRow:
     file_url: str = ""
     platform: str = ""
     notes: str = ""
+    hook: str = ""
+    format: str = ""
+    description: str = ""
 
 class GoogleService:
     def __init__(self):
@@ -153,7 +156,8 @@ class GoogleService:
         try:
             values = [[
                 row.date, row.content_type, row.title,
-                row.status, row.file_url, row.platform, row.notes
+                row.status, row.file_url, row.platform, row.notes,
+                row.hook, row.format, row.description
             ]]
             
             loop = asyncio.get_event_loop()
@@ -161,7 +165,7 @@ class GoogleService:
                 None,
                 lambda: self.sheets_service.spreadsheets().values().append(
                     spreadsheetId=self.spreadsheet_id,
-                    range='A:G',
+                    range='A:J',
                     valueInputOption='USER_ENTERED',
                     insertDataOption='INSERT_ROWS',
                     body={'values': values}
@@ -186,20 +190,21 @@ class GoogleService:
                 None,
                 lambda: self.sheets_service.spreadsheets().values().get(
                     spreadsheetId=self.spreadsheet_id,
-                    range='A1:G1'
+                    range='A1:J1'
                 ).execute()
             )
             
-            if result.get('values'):
+            values = result.get('values')
+            if values and len(values[0]) >= 10:
                 return True
             
-            headers = [['Дата', 'Тип контента', 'Название', 'Статус', 'Ссылка', 'Платформа', 'Примечания']]
+            headers = [['Дата', 'Тип контента', 'Название', 'Статус', 'Ссылка', 'Платформа', 'Примечания', 'Хук', 'Формат', 'Описание']]
             
             await loop.run_in_executor(
                 None,
                 lambda: self.sheets_service.spreadsheets().values().update(
                     spreadsheetId=self.spreadsheet_id,
-                    range='A1:G1',
+                    range='A1:J1',
                     valueInputOption='USER_ENTERED',
                     body={'values': headers}
                 ).execute()
@@ -211,12 +216,15 @@ class GoogleService:
     
     async def log_content(
         self,
-        content_type: Literal["video_avatar", "seo_article", "short_video", "carousel"],
+        content_type: Literal["video_avatar", "seo_article", "short_video", "carousel", "content_plan"],
         title: str,
         status: str = "generated",
         file_url: str = "",
         platform: str = "",
-        notes: str = ""
+        notes: str = "",
+        hook: str = "",
+        format: str = "",
+        description: str = ""
     ) -> bool:
         row = SheetRow(
             date=datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -225,7 +233,10 @@ class GoogleService:
             status=status,
             file_url=file_url,
             platform=platform,
-            notes=notes
+            notes=notes,
+            hook=hook,
+            format=format,
+            description=description
         )
         return await self.add_row_to_sheet(row)
 

@@ -192,6 +192,8 @@ async def generate_plan(callback: CallbackQuery, state: FSMContext):
     await state.update_data(posts_per_day=posts_per_day)
     await state.set_state(ContentPlanStates.generating)
     
+    await callback.answer()  # Отвечаем сразу, чтобы избежать таймаута
+    
     days = 7 if period == "week" else 30
     total = days * posts_per_day * len(platforms)
     
@@ -238,7 +240,9 @@ async def generate_plan(callback: CallbackQuery, state: FSMContext):
                 title=idea.title,
                 status="generated",
                 platform=idea.platform,
-                notes=f"{idea.description} | Хук: {idea.hook} | Формат: {idea.format}"
+                hook=idea.hook,
+                format=idea.format,
+                description=idea.description
             )
         
         # Сохраняем план
@@ -255,8 +259,6 @@ async def generate_plan(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         await callback.message.edit_text(f"❌ Ошибка генерации: {e}", reply_markup=back_to_menu_kb())
         await state.clear()
-    
-    await callback.answer()
 
 async def show_content_plan(message, plan, page: int = 0):
     """Показывает контент-план постранично"""
@@ -528,6 +530,8 @@ async def regenerate_plan(callback: CallbackQuery, state: FSMContext):
     await state.set_state(ContentPlanStates.generating)
     await callback.message.edit_text("⏳ Перегенерирую контент-план...")
     
+    await callback.answer()  # Отвечаем сразу
+    
     try:
         comp_content = openai_service._load_competitors_content()
         
@@ -546,7 +550,9 @@ async def regenerate_plan(callback: CallbackQuery, state: FSMContext):
                 title=idea.title,
                 status="generated",
                 platform=idea.platform,
-                notes=f"{idea.description} | Хук: {idea.hook} | Формат: {idea.format}"
+                hook=idea.hook,
+                format=idea.format,
+                description=idea.description
             )
         
         await state.update_data(content_plan={
@@ -561,5 +567,3 @@ async def regenerate_plan(callback: CallbackQuery, state: FSMContext):
         
     except Exception as e:
         await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=back_to_menu_kb())
-    
-    await callback.answer()
