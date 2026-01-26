@@ -28,8 +28,7 @@ IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
 def avatar_source_kb():
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="📤 Загрузить своё фото", callback_data="avatar:source:upload"))
-    builder.row(InlineKeyboardButton(text="🎨 Сгенерировать (текст)", callback_data="avatar:source:generate"))
-    builder.row(InlineKeyboardButton(text="🖼 Сгенерировать из фото", callback_data="avatar:source:edit"))
+    builder.row(InlineKeyboardButton(text="🎨 Сгенерировать по промпту", callback_data="avatar:source:generate"))
     builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
     return builder.as_markup()
 
@@ -38,17 +37,6 @@ def avatar_style_kb():
     builder.row(InlineKeyboardButton(text="👨‍💼 Деловой портрет", callback_data="avatar:style:business"))
     builder.row(InlineKeyboardButton(text="😊 Casual/повседневный", callback_data="avatar:style:casual"))
     builder.row(InlineKeyboardButton(text="🎨 Креативный", callback_data="avatar:style:creative"))
-    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="avatar:back_source"))
-    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
-    return builder.as_markup()
-
-def avatar_edit_style_kb():
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="🎭 3D-фигурка", callback_data="avatar:edit_style:figure"))
-    builder.row(InlineKeyboardButton(text="🎨 Мультяшный", callback_data="avatar:edit_style:cartoon"))
-    builder.row(InlineKeyboardButton(text="🖼 Улучшенный портрет", callback_data="avatar:edit_style:enhanced"))
-    builder.row(InlineKeyboardButton(text="✨ Фэнтези", callback_data="avatar:edit_style:fantasy"))
-    builder.row(InlineKeyboardButton(text="🤖 Киберпанк", callback_data="avatar:edit_style:cyberpunk"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="avatar:back_source"))
     builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
     return builder.as_markup()
@@ -92,22 +80,6 @@ AVATAR_STYLES = {
     "business": "professional business portrait, corporate headshot, neutral background, confident",
     "casual": "friendly casual portrait, natural lighting, warm smile, soft background",
     "creative": "artistic portrait, creative lighting, unique composition, colorful"
-}
-
-AVATAR_EDIT_STYLES = {
-    "figure": "turn this photo into a collectible character figure with packaging box behind it, plastic base, indoor scene",
-    "cartoon": "transform into colorful cartoon character, Disney Pixar style, vibrant, expressive, digital art",
-    "enhanced": "enhance to professional studio portrait, perfect lighting, subtle retouching, high resolution",
-    "fantasy": "transform into magical fantasy character, ethereal glow, mystical elements, enchanted background",
-    "cyberpunk": "transform into cyberpunk character, neon lights, futuristic, holographic effects, cyber aesthetic"
-}
-
-AVATAR_EDIT_STYLE_NAMES = {
-    "figure": "🎭 3D-фигурка",
-    "cartoon": "🎨 Мультяшный",
-    "enhanced": "🖼 Улучшенный портрет",
-    "fantasy": "✨ Фэнтези",
-    "cyberpunk": "🤖 Киберпанк"
 }
 
 # ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
@@ -393,18 +365,6 @@ async def select_generate_avatar(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
-@router.callback_query(AvatarVideoStates.selecting_avatar_source, F.data == "avatar:source:edit")
-async def select_edit_avatar(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(avatar_generation_mode="image")
-    await state.set_state(AvatarVideoStates.waiting_source_image)
-    await callback.message.edit_text(
-        "🖼 <b>Генерация аватара из фото</b>\n\n"
-        "Загрузите фото, на основе которого будет создан аватар.\n\n📷 Отправьте фото:",
-        parse_mode="HTML",
-        reply_markup=cancel_kb()
-    )
-    await callback.answer()
-
 @router.callback_query(F.data == "avatar:back_source")
 async def back_to_avatar_source(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AvatarVideoStates.selecting_avatar_source)
@@ -438,11 +398,12 @@ async def process_avatar_description(message: Message, state: FSMContext):
     await message.answer("🎨 Генерирую аватар через Nano Banana... (1-2 мин)")
     
     try:
+        # ИСПРАВЛЕНИЕ: aspect_ratio теперь 9:16 вместо 1:1
         full_prompt = f"{style_prompt}, {description}, portrait photo, high quality, realistic face"
         
         result = await kieai_service.generate_nano_banana_image(
             prompt=full_prompt,
-            aspect_ratio="1:1"
+            aspect_ratio="9:16"
         )
         
         if result.get("code") != 200:
@@ -471,148 +432,6 @@ async def process_avatar_description(message: Message, state: FSMContext):
         
     except Exception as e:
         logger.error(f"Avatar generation error: {e}")
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=avatar_source_kb())
-        await state.set_state(AvatarVideoStates.selecting_avatar_source)
-
-# ============ ГЕНЕРАЦИЯ ИЗ ФОТО (Nano Banana Edit) ============
-
-@router.message(AvatarVideoStates.waiting_source_image, F.photo)
-async def process_source_image_photo(message: Message, state: FSMContext, bot: Bot):
-    photo = message.photo[-1]
-    await message.answer("⏳ Загружаю фото...")
-    
-    try:
-        source_image_url = await file_upload_service.upload_telegram_file(
-            bot=bot,
-            file_id=photo.file_id,
-            filename=f"source_{message.from_user.id}_{datetime.now().timestamp()}.jpg"
-        )
-        
-        await state.update_data(source_image_url=source_image_url)
-        await state.set_state(AvatarVideoStates.selecting_edit_style)
-        
-        await message.answer(
-            "✅ <b>Фото загружено!</b>\n\nВыберите стиль трансформации:",
-            parse_mode="HTML",
-            reply_markup=avatar_edit_style_kb()
-        )
-    except Exception as e:
-        logger.error(f"Source image upload error: {e}")
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
-
-@router.message(AvatarVideoStates.waiting_source_image, F.document)
-async def process_source_image_document(message: Message, state: FSMContext, bot: Bot):
-    doc = message.document
-    filename = doc.file_name or "file"
-    ext = os.path.splitext(filename)[1].lower()
-    
-    if ext not in IMAGE_EXTENSIONS:
-        await message.answer(f"⚠️ Формат {ext} не поддерживается.", reply_markup=cancel_kb())
-        return
-    
-    if doc.file_size and doc.file_size > 10 * 1024 * 1024:
-        await message.answer("⚠️ Файл слишком большой (макс. 10 МБ).", reply_markup=cancel_kb())
-        return
-    
-    await message.answer("⏳ Загружаю фото...")
-    
-    try:
-        source_image_url = await file_upload_service.upload_telegram_file(
-            bot=bot,
-            file_id=doc.file_id,
-            filename=f"source_{message.from_user.id}_{datetime.now().timestamp()}{ext}"
-        )
-        
-        await state.update_data(source_image_url=source_image_url)
-        await state.set_state(AvatarVideoStates.selecting_edit_style)
-        
-        await message.answer(
-            "✅ <b>Фото загружено!</b>\n\nВыберите стиль трансформации:",
-            parse_mode="HTML",
-            reply_markup=avatar_edit_style_kb()
-        )
-    except Exception as e:
-        logger.error(f"Source image document upload error: {e}")
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
-
-@router.message(AvatarVideoStates.waiting_source_image)
-async def process_source_image_invalid(message: Message):
-    await message.answer("⚠️ Отправьте изображение.", reply_markup=cancel_kb())
-
-@router.callback_query(AvatarVideoStates.selecting_edit_style, F.data.startswith("avatar:edit_style:"))
-async def select_edit_style(callback: CallbackQuery, state: FSMContext):
-    style_key = callback.data.split(":")[2]
-    style_prompt = AVATAR_EDIT_STYLES.get(style_key, AVATAR_EDIT_STYLES["figure"])
-    style_name = AVATAR_EDIT_STYLE_NAMES.get(style_key, style_key)
-    
-    await state.update_data(edit_style=style_key, edit_style_prompt=style_prompt)
-    await state.set_state(AvatarVideoStates.waiting_edit_description)
-    
-    await callback.message.edit_text(
-        f"🎨 <b>Стиль: {style_name}</b>\n\n"
-        "Добавьте описание или отправьте <b>-</b> чтобы пропустить:\n\n"
-        "💡 Примеры:\n• <i>В костюме супергероя</i>\n• <i>С золотой короной</i>",
-        parse_mode="HTML",
-        reply_markup=cancel_kb()
-    )
-    await callback.answer()
-
-@router.message(AvatarVideoStates.waiting_edit_description)
-async def process_edit_description_and_generate(message: Message, state: FSMContext):
-    additional_desc = message.text.strip()
-    data = await state.get_data()
-    
-    source_image_url = data.get("source_image_url")
-    base_prompt = data.get("edit_style_prompt", "")
-    
-    if not source_image_url:
-        await message.answer("❌ Изображение не найдено. Начните заново.", reply_markup=back_to_menu_kb())
-        await state.clear()
-        return
-    
-    if additional_desc and additional_desc != "-":
-        full_prompt = f"{base_prompt}. Additional details: {additional_desc}"
-    else:
-        full_prompt = base_prompt
-    
-    await message.answer("🎨 Генерирую аватар через Nano Banana Edit... (1-3 мин)")
-    
-    try:
-        result = await kieai_service.generate_nano_banana_edit(
-            prompt=full_prompt,
-            image_urls=[source_image_url],
-            aspect_ratio="1:1",
-            output_format="png"
-        )
-        
-        logger.info(f"Nano Banana Edit response: {result}")
-        
-        if result.get("code") != 200:
-            raise Exception(result.get("msg", "Ошибка генерации"))
-        
-        task_id = result.get("data", {}).get("taskId")
-        if not task_id:
-            raise Exception("Не получен taskId")
-        
-        await message.answer("⏳ Ожидаю результат генерации...")
-        
-        avatar_url = await wait_for_image_result(task_id)
-        
-        if not avatar_url:
-            raise Exception("Не удалось получить изображение")
-        
-        await state.update_data(avatar_image_url=avatar_url)
-        await state.set_state(AvatarVideoStates.confirming_avatar)
-        
-        await message.answer_photo(
-            photo=avatar_url,
-            caption="✅ <b>Аватар из фото готов!</b>\n\nИспользовать?",
-            parse_mode="HTML",
-            reply_markup=confirm_avatar_kb()
-        )
-        
-    except Exception as e:
-        logger.error(f"Avatar edit generation error: {e}", exc_info=True)
         await message.answer(f"❌ Ошибка: {e}", reply_markup=avatar_source_kb())
         await state.set_state(AvatarVideoStates.selecting_avatar_source)
 
@@ -699,23 +518,12 @@ async def confirm_avatar_ask_subtitles(callback: CallbackQuery, state: FSMContex
 
 @router.callback_query(AvatarVideoStates.confirming_avatar, F.data == "avatar:regenerate_image")
 async def regenerate_avatar_image(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    mode = data.get("avatar_generation_mode", "text")
-    
-    if mode == "image":
-        await state.set_state(AvatarVideoStates.selecting_edit_style)
-        await callback.message.answer(
-            "🎨 <b>Выберите другой стиль:</b>",
-            parse_mode="HTML",
-            reply_markup=avatar_edit_style_kb()
-        )
-    else:
-        await state.set_state(AvatarVideoStates.selecting_avatar_style)
-        await callback.message.answer(
-            "🎨 <b>Генерация аватара</b>\n\nВыберите стиль:",
-            parse_mode="HTML",
-            reply_markup=avatar_style_kb()
-        )
+    await state.set_state(AvatarVideoStates.selecting_avatar_style)
+    await callback.message.answer(
+        "🎨 <b>Генерация аватара</b>\n\nВыберите стиль:",
+        parse_mode="HTML",
+        reply_markup=avatar_style_kb()
+    )
     await callback.answer()
 
 @router.callback_query(AvatarVideoStates.confirming_avatar, F.data == "avatar:source:upload")
@@ -866,6 +674,7 @@ async def process_orientation_and_generate(callback: CallbackQuery, state: FSMCo
         
         subtitle_info = "\n📝 Субтитры: будут наложены" if add_subtitles else ""
         
+        # ИСПРАВЛЕНИЕ 5: Добавляем главное меню после генерации
         await callback.message.answer(
             f"✅ <b>Генерация запущена!</b>\n\n"
             f"🆔 <code>{task_id}</code>\n"
