@@ -153,6 +153,54 @@ class KieAIService:
             ) as resp:
                 return await resp.json()
     
+    async def generate_nano_banana_pro_image(
+        self,
+        prompt: str,
+        aspect_ratio: str = "1:1",
+        resolution: str = "2K",
+        output_format: str = "png",
+        image_input: Optional[list[str]] = None,
+        callback_url: Optional[str] = None
+    ) -> dict:
+        """
+        Генерация изображения через Google Nano Banana Pro (более мощная модель)
+        
+        Args:
+            prompt: Описание желаемого результата (max 10000 символов)
+            aspect_ratio: Соотношение сторон ("1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9", "auto")
+            resolution: Разрешение ("1K", "2K", "4K")
+            output_format: Формат вывода ("png" или "jpg")
+            image_input: Опциональные входные изображения (до 8 шт)
+            callback_url: URL для колбэка
+        
+        Returns:
+            dict с taskId или ошибкой
+        """
+        if not self.is_available():
+            raise RuntimeError("Kie.ai API недоступен")
+        
+        payload = {
+            "model": "nano-banana-pro",
+            "input": {
+                "prompt": prompt,
+                "aspect_ratio": aspect_ratio,
+                "resolution": resolution,
+                "output_format": output_format,
+                "image_input": image_input or []
+            }
+        }
+        
+        if callback_url:
+            payload["callBackUrl"] = callback_url
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.base_url}/api/v1/jobs/createTask",
+                headers=self._headers(),
+                json=payload
+            ) as resp:
+                return await resp.json()
+    
     async def generate_nano_banana_edit(
         self,
         prompt: str,
