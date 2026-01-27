@@ -470,9 +470,8 @@ async def process_edit_description(message: Message, state: FSMContext):
     await message.answer("🎨 Генерирую аватар через Nano Banana Edit... (1-2 мин)")
     
     try:
-        # Используем Nano Banana Edit для сохранения лица
-        full_prompt = f"Keep the face exactly as in the original image. Change: {description}. Professional portrait, 9:16 vertical format, high quality"
-        
+        full_prompt = f"CRITICAL: Preserve the face and facial features EXACTLY as shown in the original image - DO NOT modify face, skin tone, eyes, nose, mouth, or any facial characteristics. ONLY change: {description}. Professional portrait photo, 9:16 vertical format, high quality, photorealistic"
+
         result = await kieai_service.generate_nano_banana_edit(
             prompt=full_prompt,
             image_urls=[source_image_url],
