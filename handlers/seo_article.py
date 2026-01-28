@@ -4,7 +4,7 @@ from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 
 from states.generation_states import SEOArticleStates
-from keyboards.menus import cancel_kb, back_to_menu_kb
+from keyboards.menus import cancel_kb, back_to_menu_kb, cancel_and_back_kb
 from services.openai_service import openai_service
 from services.google_service import google_service
 
@@ -134,7 +134,8 @@ async def start_seo_flow(callback: CallbackQuery, state: FSMContext):
     
     await state.set_state(SEOArticleStates.waiting_topic)
     await callback.message.edit_text(
-        "<b>Создание SEO-статьи</b>\n\n",
+        "<b>Создание SEO-статьи</b>\n\n"
+        "Введите тему для статьи:",
         parse_mode="HTML",
         reply_markup=cancel_kb()
     )
@@ -190,11 +191,10 @@ async def process_topic_and_generate(message: Message, state: FSMContext):
         
         await state.clear()
         
-        # Возвращаем в меню
-        from keyboards.menus import main_menu_kb
+        # ИСПРАВЛЕНИЕ: Возвращаем в меню с кнопкой
         await message.answer(
             "Выберите следующее действие:",
-            reply_markup=main_menu_kb()
+            reply_markup=back_to_menu_kb()
         )
         
     except Exception as e:

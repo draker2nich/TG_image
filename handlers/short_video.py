@@ -6,7 +6,8 @@ from aiogram.fsm.context import FSMContext
 from states.generation_states import ShortVideoStates
 from keyboards.menus import (
     cancel_kb, video_model_kb, video_mode_kb, 
-    aspect_ratio_kb, confirm_edit_kb, back_to_menu_kb
+    aspect_ratio_kb, confirm_edit_kb, back_to_menu_kb,
+    cancel_and_back_kb
 )
 from services.kieai_service import kieai_service
 from services.openai_service import openai_service
@@ -78,7 +79,7 @@ async def select_mode(callback: CallbackQuery, state: FSMContext):
             "✍️ <b>Опишите идею видео кратко</b>\n\n"
             "Опишите суть — промпт будет автоматически улучшен\n",
             parse_mode="HTML",
-            reply_markup=cancel_kb()
+            reply_markup=cancel_and_back_kb("back:mode")
         )
     else:  # i2v
         await state.set_state(ShortVideoStates.waiting_image)
@@ -86,8 +87,30 @@ async def select_mode(callback: CallbackQuery, state: FSMContext):
             "🖼 <b>Отправьте изображение</b>\n\n"
             "Загрузите фото, которое нужно анимировать.",
             parse_mode="HTML",
-            reply_markup=cancel_kb()
+            reply_markup=cancel_and_back_kb("back:mode")
         )
+    await callback.answer()
+
+@router.callback_query(ShortVideoStates.waiting_prompt, F.data == "back:mode")
+async def back_from_prompt(callback: CallbackQuery, state: FSMContext):
+    """Возврат к выбору режима из ввода промпта"""
+    await state.set_state(ShortVideoStates.selecting_mode)
+    await callback.message.edit_text(
+        "📹 <b>Выберите режим генерации:</b>",
+        parse_mode="HTML",
+        reply_markup=video_mode_kb()
+    )
+    await callback.answer()
+
+@router.callback_query(ShortVideoStates.waiting_image, F.data == "back:mode")
+async def back_from_image(callback: CallbackQuery, state: FSMContext):
+    """Возврат к выбору режима из загрузки изображения"""
+    await state.set_state(ShortVideoStates.selecting_mode)
+    await callback.message.edit_text(
+        "📹 <b>Выберите режим генерации:</b>",
+        parse_mode="HTML",
+        reply_markup=video_mode_kb()
+    )
     await callback.answer()
 
 @router.message(ShortVideoStates.waiting_prompt)
@@ -176,19 +199,48 @@ async def process_image(message: Message, state: FSMContext):
         "✅ Изображение получено!\n\n"
         "✍️ Теперь кратко опишите, как должно анимироваться изображение:\n\n",
         parse_mode="HTML",
-        reply_markup=cancel_kb()
+        reply_markup=cancel_and_back_kb("back:image")
     )
+
+@router.callback_query(ShortVideoStates.waiting_prompt, F.data == "back:image")
+async def back_to_image_upload(callback: CallbackQuery, state: FSMContext):
+    """Возврат к загрузке изображения"""
+    await state.set_state(ShortVideoStates.waiting_image)
+    await callback.message.edit_text(
+        "🖼 <b>Отправьте изображение</b>\n\n"
+        "Загрузите фото, которое нужно анимировать.",
+        parse_mode="HTML",
+        reply_markup=cancel_and_back_kb("back:mode")
+    )
+    await callback.answer()
 
 @router.message(ShortVideoStates.waiting_image)
 async def process_image_invalid(message: Message):
     """Некорректный ввод вместо изображения"""
-    await message.answer("⚠️ Пожалуйста, отправьте изображение.", reply_markup=cancel_kb())
+    await message.answer("⚠️ Пожалуйста, отправьте изображение.", reply_markup=cancel_and_back_kb("back:mode"))
 
 @router.callback_query(ShortVideoStates.selecting_aspect, F.data == "back:mode")
-async def back_to_mode(callback: CallbackQuery, state: FSMContext):
-    """Возврат к выбору режима"""
-    await state.set_state(ShortVideoStates.selecting_mode)
-    await callback.message.edit_text("Выберите режим:", reply_markup=video_mode_kb())
+async def back_to_mode_from_aspect(callback: CallbackQuery, state: FSMContext):
+    """Возврат к выбору режима из выбора соотношения"""
+    data = await state.get_data()
+    image_url = data.get("image_url")
+    
+    if image_url:
+        # Если было загружено изображение, возвращаемся к описанию анимации
+        await state.set_state(ShortVideoStates.waiting_prompt)
+        await callback.message.edit_text(
+            "✍️ <b>Опишите, как должно анимироваться изображение</b>",
+            parse_mode="HTML",
+            reply_markup=cancel_and_back_kb("back:image")
+        )
+    else:
+        # Если текст -> видео, возвращаемся к вводу промпта
+        await state.set_state(ShortVideoStates.waiting_prompt)
+        await callback.message.edit_text(
+            "✍️ <b>Опишите идею видео кратко</b>",
+            parse_mode="HTML",
+            reply_markup=cancel_and_back_kb("back:mode")
+        )
     await callback.answer()
 
 @router.callback_query(ShortVideoStates.selecting_aspect, F.data.startswith("aspect:"))

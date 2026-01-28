@@ -40,6 +40,13 @@ def cancel_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
     ])
 
+def cancel_and_back_kb(back_callback: str) -> InlineKeyboardMarkup:
+    """Клавиатура с кнопками Назад и Отмена"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback)],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
+    ])
+
 def confirm_edit_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(

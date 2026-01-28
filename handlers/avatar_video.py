@@ -9,7 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
 
 from states.generation_states import AvatarVideoStates
-from keyboards.menus import cancel_kb, confirm_edit_kb, back_to_menu_kb
+from keyboards.menus import cancel_kb, confirm_edit_kb, back_to_menu_kb, cancel_and_back_kb
 from services.openai_service import openai_service
 from services.kling_motion_service import kling_motion_service
 from services.kieai_service import kieai_service
@@ -163,7 +163,7 @@ async def process_topic(message: Message, state: FSMContext):
 @router.callback_query(AvatarVideoStates.waiting_script_confirm, F.data == "edit")
 async def edit_script(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AvatarVideoStates.waiting_script_edit)
-    await callback.message.edit_text("✏️ Введите отредактированный сценарий:", reply_markup=cancel_kb())
+    await callback.message.edit_text("✏️ Введите отредактированный сценарий:", reply_markup=cancel_and_back_kb("menu:main"))
     await callback.answer()
 
 @router.message(AvatarVideoStates.waiting_script_edit)
@@ -209,7 +209,7 @@ async def confirm_script(callback: CallbackQuery, state: FSMContext):
         "• Форматы: MP4, MOV, MKV\n"
         "• Размер: до 100 МБ",
         parse_mode="HTML",
-        reply_markup=cancel_kb()
+        reply_markup=cancel_and_back_kb("menu:main")
     )
     await callback.answer()
 
@@ -221,10 +221,10 @@ async def process_video(message: Message, state: FSMContext, bot: Bot):
     duration = video.duration or 0
     
     if duration < 3:
-        await message.answer("⚠️ Видео слишком короткое (мин. 3 сек).", reply_markup=cancel_kb())
+        await message.answer("⚠️ Видео слишком короткое (мин. 3 сек).", reply_markup=cancel_and_back_kb("menu:main"))
         return
     if duration > 30:
-        await message.answer("⚠️ Видео слишком длинное (макс. 30 сек).", reply_markup=cancel_kb())
+        await message.answer("⚠️ Видео слишком длинное (макс. 30 сек).", reply_markup=cancel_and_back_kb("menu:main"))
         return
     
     await message.answer("⏳ Загружаю видео...")
@@ -252,7 +252,7 @@ async def process_video(message: Message, state: FSMContext, bot: Bot):
         )
     except Exception as e:
         logger.error(f"Video upload error: {e}")
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
+        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_and_back_kb("menu:main"))
 
 @router.message(AvatarVideoStates.waiting_video, F.video_note)
 async def process_video_note(message: Message, state: FSMContext, bot: Bot):
@@ -260,10 +260,10 @@ async def process_video_note(message: Message, state: FSMContext, bot: Bot):
     duration = video_note.duration or 0
     
     if duration < 3:
-        await message.answer("⚠️ Кружок слишком короткий (мин. 3 сек).", reply_markup=cancel_kb())
+        await message.answer("⚠️ Кружок слишком короткий (мин. 3 сек).", reply_markup=cancel_and_back_kb("menu:main"))
         return
     if duration > 30:
-        await message.answer("⚠️ Кружок слишком длинный (макс. 30 сек).", reply_markup=cancel_kb())
+        await message.answer("⚠️ Кружок слишком длинный (макс. 30 сек).", reply_markup=cancel_and_back_kb("menu:main"))
         return
     
     await message.answer("⏳ Загружаю кружок...")
@@ -285,7 +285,7 @@ async def process_video_note(message: Message, state: FSMContext, bot: Bot):
         )
     except Exception as e:
         logger.error(f"Video note error: {e}")
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
+        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_and_back_kb("menu:main"))
 
 @router.message(AvatarVideoStates.waiting_video, F.document)
 async def process_document_video(message: Message, state: FSMContext, bot: Bot):
@@ -294,11 +294,11 @@ async def process_document_video(message: Message, state: FSMContext, bot: Bot):
     ext = os.path.splitext(filename)[1].lower()
     
     if ext not in VIDEO_EXTENSIONS:
-        await message.answer(f"⚠️ Формат {ext} не поддерживается.", reply_markup=cancel_kb())
+        await message.answer(f"⚠️ Формат {ext} не поддерживается.", reply_markup=cancel_and_back_kb("menu:main"))
         return
     
     if doc.file_size and doc.file_size > 100 * 1024 * 1024:
-        await message.answer("⚠️ Файл слишком большой (макс. 100 МБ).", reply_markup=cancel_kb())
+        await message.answer("⚠️ Файл слишком большой (макс. 100 МБ).", reply_markup=cancel_and_back_kb("menu:main"))
         return
     
     await message.answer("⏳ Загружаю видео...")
@@ -320,11 +320,11 @@ async def process_document_video(message: Message, state: FSMContext, bot: Bot):
         )
     except Exception as e:
         logger.error(f"Document video error: {e}")
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
+        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_and_back_kb("menu:main"))
 
 @router.message(AvatarVideoStates.waiting_video)
 async def process_video_invalid(message: Message):
-    await message.answer("⚠️ Отправьте видео (MP4, MOV, MKV).", reply_markup=cancel_kb())
+    await message.answer("⚠️ Отправьте видео (MP4, MOV, MKV).", reply_markup=cancel_and_back_kb("menu:main"))
 
 # ============ ВЫБОР ИСТОЧНИКА АВАТАРА ============
 
@@ -335,7 +335,7 @@ async def select_upload_avatar(callback: CallbackQuery, state: FSMContext):
         "📤 <b>Загрузите фото аватара</b>\n\n"
         "Форматы: JPEG, PNG, WEBP\nРазмер: до 10 МБ\n\n📷 Отправьте фото:",
         parse_mode="HTML",
-        reply_markup=cancel_kb()
+        reply_markup=cancel_and_back_kb("menu:main")
     )
     await callback.answer()
 
@@ -350,7 +350,7 @@ async def select_generate_avatar(callback: CallbackQuery, state: FSMContext):
         "• <i>Женщина со светлыми волосами, улыбка</i>\n\n"
         "✏️ Введите описание аватара:",
         parse_mode="HTML",
-        reply_markup=cancel_kb()
+        reply_markup=cancel_and_back_kb("menu:main")
     )
     await callback.answer()
 
@@ -364,7 +364,7 @@ async def select_edit_avatar(callback: CallbackQuery, state: FSMContext):
         "Лицо будет сохранено 1 в 1.\n\n"
         "📷 Отправьте фото:",
         parse_mode="HTML",
-        reply_markup=cancel_kb()
+        reply_markup=cancel_and_back_kb("menu:main")
     )
     await callback.answer()
 
@@ -447,15 +447,15 @@ async def process_source_image(message: Message, state: FSMContext, bot: Bot):
             "• <i>уличный фон, casual одежда</i>\n\n"
             "✏️ Введите описание изменений:",
             parse_mode="HTML",
-            reply_markup=cancel_kb()
+            reply_markup=cancel_and_back_kb("menu:main")
         )
     except Exception as e:
         logger.error(f"Source image upload error: {e}")
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
+        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_and_back_kb("menu:main"))
 
 @router.message(AvatarVideoStates.waiting_source_image)
 async def process_source_image_invalid(message: Message):
-    await message.answer("⚠️ Отправьте фотографию.", reply_markup=cancel_kb())
+    await message.answer("⚠️ Отправьте фотографию.", reply_markup=cancel_and_back_kb("menu:main"))
 
 @router.message(AvatarVideoStates.waiting_edit_description)
 async def process_edit_description(message: Message, state: FSMContext):
@@ -464,7 +464,7 @@ async def process_edit_description(message: Message, state: FSMContext):
     source_image_url = data.get("source_image_url")
     
     if not source_image_url:
-        await message.answer("❌ Ошибка: исходное фото не найдено.", reply_markup=cancel_kb())
+        await message.answer("❌ Ошибка: исходное фото не найдено.", reply_markup=cancel_and_back_kb("menu:main"))
         return
     
     await message.answer("🎨 Генерирую аватар через Nano Banana Edit... (1-2 мин)")
@@ -532,7 +532,7 @@ async def process_avatar_photo(message: Message, state: FSMContext, bot: Bot):
         )
     except Exception as e:
         logger.error(f"Photo upload error: {e}")
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
+        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_and_back_kb("menu:main"))
 
 @router.message(AvatarVideoStates.waiting_avatar_image, F.document)
 async def process_avatar_document(message: Message, state: FSMContext, bot: Bot):
@@ -541,11 +541,11 @@ async def process_avatar_document(message: Message, state: FSMContext, bot: Bot)
     ext = os.path.splitext(filename)[1].lower()
     
     if ext not in IMAGE_EXTENSIONS:
-        await message.answer(f"⚠️ Формат {ext} не поддерживается.", reply_markup=cancel_kb())
+        await message.answer(f"⚠️ Формат {ext} не поддерживается.", reply_markup=cancel_and_back_kb("menu:main"))
         return
     
     if doc.file_size and doc.file_size > 10 * 1024 * 1024:
-        await message.answer("⚠️ Файл слишком большой (макс. 10 МБ).", reply_markup=cancel_kb())
+        await message.answer("⚠️ Файл слишком большой (макс. 10 МБ).", reply_markup=cancel_and_back_kb("menu:main"))
         return
     
     await message.answer("⏳ Загружаю фото...")
@@ -568,11 +568,11 @@ async def process_avatar_document(message: Message, state: FSMContext, bot: Bot)
         )
     except Exception as e:
         logger.error(f"Avatar document upload error: {e}")
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
+        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_and_back_kb("menu:main"))
 
 @router.message(AvatarVideoStates.waiting_avatar_image)
 async def process_avatar_invalid(message: Message):
-    await message.answer("⚠️ Отправьте фотографию.", reply_markup=cancel_kb())
+    await message.answer("⚠️ Отправьте фотографию.", reply_markup=cancel_and_back_kb("menu:main"))
 
 # ============ ПОДТВЕРЖДЕНИЕ И НАСТРОЙКИ ============
 
@@ -598,7 +598,7 @@ async def regenerate_avatar_image(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer(
             "🎨 <b>Генерация аватара по промпту</b>\n\nВведите описание:",
             parse_mode="HTML",
-            reply_markup=cancel_kb()
+            reply_markup=cancel_and_back_kb("menu:main")
         )
     else:
         await state.set_state(AvatarVideoStates.selecting_avatar_source)
@@ -611,7 +611,7 @@ async def regenerate_avatar_image(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(AvatarVideoStates.confirming_avatar, F.data == "avatar:source:upload")
 async def switch_to_upload(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AvatarVideoStates.waiting_avatar_image)
-    await callback.message.answer("📤 <b>Загрузите фото аватара:</b>", parse_mode="HTML", reply_markup=cancel_kb())
+    await callback.message.answer("📤 <b>Загрузите фото аватара:</b>", parse_mode="HTML", reply_markup=cancel_and_back_kb("menu:main"))
     await callback.answer()
 
 @router.callback_query(AvatarVideoStates.selecting_subtitles, F.data == "avatar:back_avatar")

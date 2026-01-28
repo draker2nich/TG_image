@@ -7,7 +7,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
 
 from states.generation_states import KnowledgeBaseStates, CompetitorsStates
-from keyboards.menus import knowledge_base_kb, cancel_kb, back_to_menu_kb
+from keyboards.menus import knowledge_base_kb, cancel_kb, back_to_menu_kb, cancel_and_back_kb
 from config import config
 
 router = Router()
@@ -182,7 +182,7 @@ async def start_adding_link(callback: CallbackQuery, state: FSMContext):
         f"Можно отправить несколько ссылок (каждую с новой строки).\n\n"
         f"💡 Пример:\n<code>{platform_examples[platform]}</code>",
         parse_mode="HTML",
-        reply_markup=cancel_kb()
+        reply_markup=cancel_and_back_kb("menu:main")
     )
     await callback.answer()
 
@@ -206,7 +206,7 @@ async def process_link_input(message: Message, state: FSMContext):
     input_links = [link.strip() for link in message.text.split('\n') if link.strip()]
     
     if not input_links:
-        await message.answer("⚠️ Не обнаружено ни одной ссылки. Попробуйте снова.", reply_markup=cancel_kb())
+        await message.answer("⚠️ Не обнаружено ни одной ссылки. Попробуйте снова.", reply_markup=cancel_and_back_kb("menu:main"))
         return
     
     # Загружаем текущую базу
@@ -366,7 +366,7 @@ async def process_link_invalid(message: Message):
     """Обработка неверного формата"""
     await message.answer(
         "⚠️ Отправьте текстовое сообщение со ссылками.",
-        reply_markup=cancel_kb()
+        reply_markup=cancel_and_back_kb("menu:main")
     )
 async def noop_callback(callback: CallbackQuery):
     """Заглушка для информационных кнопок"""
@@ -383,7 +383,7 @@ async def start_upload(callback: CallbackQuery, state: FSMContext):
         "Отправьте файл с информацией о вашем продукте/услуге.\n\n"
         "Поддерживаемые форматы: .docx, .txt, .md",
         parse_mode="HTML",
-        reply_markup=cancel_kb()
+        reply_markup=cancel_and_back_kb("menu:main")
     )
     await callback.answer()
 
@@ -400,7 +400,7 @@ async def process_file_upload(message: Message, state: FSMContext):
         await message.answer(
             f"⚠️ Формат {ext} не поддерживается.\n"
             f"Поддерживаемые: {', '.join(allowed_ext)}",
-            reply_markup=cancel_kb()
+            reply_markup=cancel_and_back_kb("menu:main")
         )
         return
     
@@ -420,14 +420,14 @@ async def process_file_upload(message: Message, state: FSMContext):
             reply_markup=knowledge_base_kb(has_files=bool(files))
         )
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_kb())
+        await message.answer(f"❌ Ошибка: {e}", reply_markup=cancel_and_back_kb("menu:main"))
 
 @router.message(KnowledgeBaseStates.waiting_file)
 async def process_invalid_upload(message: Message):
     """Некорректный ввод"""
     await message.answer(
         "⚠️ Отправьте файл (документ).",
-        reply_markup=cancel_kb()
+        reply_markup=cancel_and_back_kb("menu:main")
     )
 
 @router.callback_query(F.data == "kb:delete")

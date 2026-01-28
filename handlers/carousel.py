@@ -7,7 +7,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
 
 from states.generation_states import CarouselStates
-from keyboards.menus import cancel_kb, back_to_menu_kb, confirm_edit_kb
+from keyboards.menus import cancel_kb, back_to_menu_kb, confirm_edit_kb, cancel_and_back_kb
 from services.carousel_service import carousel_service, CarouselContent, CarouselSlide
 from services.openai_service import openai_service
 
@@ -108,12 +108,8 @@ async def start_carousel_flow(callback: CallbackQuery, state: FSMContext):
     
     await state.set_state(CarouselStates.entering_topic)
     await callback.message.edit_text(
-        "🖼 <b>Создание карусели</b>\n\n"
-        "Введите тему карусели.\n\n"
-        "💡 Примеры:\n"
-        "• <i>5 способов повысить продуктивность</i>\n"
-        "• <i>Как начать инвестировать с нуля</i>\n"
-        "• <i>Топ ошибок при запуске бизнеса</i>",
+        "<b>Создание карусели</b>\n\n"
+        "Введите тему карусели:\n\n",
         parse_mode="HTML",
         reply_markup=cancel_kb()
     )
@@ -582,7 +578,7 @@ async def send_carousel(message, images: list[tuple[int, str]], content: dict):
     await message.answer(
         text_content,
         parse_mode="HTML",
-        reply_markup=builder.as_markup()
+        reply_markup=back_to_menu_kb()
     )
 
 @router.callback_query(CarouselStates.viewing_result, F.data == "crs:retry")

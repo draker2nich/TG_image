@@ -5,7 +5,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from states.generation_states import ContentPlanStates
-from keyboards.menus import cancel_kb, back_to_menu_kb, confirm_edit_kb
+from keyboards.menus import cancel_kb, back_to_menu_kb, confirm_edit_kb, cancel_and_back_kb
 from services.content_plan_service import content_plan_service, ContentIdea
 from services.openai_service import openai_service
 from services.google_service import google_service
@@ -85,7 +85,8 @@ async def start_content_plan_flow(callback: CallbackQuery, state: FSMContext):
     
     await state.set_state(ContentPlanStates.entering_niche)
     await callback.message.edit_text(
-        "<b>📅 Генерация контент-плана</b>\n\n",
+        "<b>Генерация контент-плана</b>\n\n"
+        "Введите тему для контент-плана:",
         parse_mode="HTML",
         reply_markup=cancel_kb()
     )
@@ -304,6 +305,8 @@ async def show_content_plan(message, plan, page: int = 0):
     builder.row(InlineKeyboardButton(text="⬅️ Главное меню", callback_data="menu:main"))
     
     await message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+
+    
 
 @router.callback_query(ContentPlanStates.viewing_plan, F.data.startswith("plan:page:"))
 async def change_page(callback: CallbackQuery, state: FSMContext):
