@@ -3,10 +3,13 @@ import json
 import os
 import tempfile
 import subprocess
+import logging
 from typing import Optional
 from dataclasses import dataclass
 from config import config
 from services.openai_service import openai_service
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class CarouselSlide:
@@ -23,75 +26,66 @@ class CarouselContent:
     color_scheme: str
     slides: list[CarouselSlide]
 
-# Параметры шаблонов
+# УЛУЧШЕННЫЕ параметры шаблонов для качественного отображения текста
 TEMPLATE_CONFIGS = {
     "light": {
         "file": "templates/carousel/light.png",
         "title": {
-            "font": "Geometria-Bold",
-            "size": 22,
-            "color": "2a292a",
-            "max_chars": 33,
-            "x": 630,
-            "y": 316,
-            "w": 718,
-            "h": 320
+            "font": "fonts/Geomrtria-Bold.ttf",
+            "size": 60,
+            "color": "292627",  
+            "max_chars": 60,
+            "y": 200,  
+            "line_spacing": 8,
+            "max_width": 635,  
         },
         "text": {
-            "font": "Geometria",
-            "size": 14,
-            "color": "2a292a",
-            "max_chars": 80,
-            "x": 630,
-            "y": 650,
-            "w": 718,
-            "h": 320
+            "font": "fonts/Geomrtria-Light.ttf",
+            "size": 38,
+            "color": "292627",
+            "max_chars": 450,
+            "line_spacing": 8,
+            "max_width": 620,
         }
     },
     "dark": {
         "file": "templates/carousel/dark.png",
         "title": {
-            "font": "Geometria-Bold",
-            "size": 12,
-            "color": "fbeacb",
-            "max_chars": 26,
-            "x": 530,
-            "y": 196,
-            "w": 718,
-            "h": 180
+            "font": "fonts/Geomrtria-Bold.ttf",
+            "size": 60,
+            "color": "f7e9d0",
+            "max_chars": 60,
+            "y": 200,
+            "line_spacing": 8,
+            "max_width": 750,
         },
         "text": {
-            "font": "Geometria",
-            "size": 8,
-            "color": "fbeacb",
-            "max_chars": 80,
-            "x": 650,
-            "y": 440,
-            "w": 718,
-            "h": 320
+            "font": "fonts/Geomrtria-Light.ttf",
+            "size": 38,
+            "color": "f7e9d0",
+            "max_chars": 450,
+            "line_spacing": 8,
+            "max_width": 750,
         }
     },
     "gradient": {
         "file": "templates/carousel/gradient.png",
         "title": {
-            "font": "Geometria-Bold",
-            "size": 12,
-            "color": "fbfdfb",
-            "max_chars": 33,
-            "x": 530,
-            "y": 670,
-            "w": 718,
-            "h": 180
+            "font": "fonts/Geomrtria-Bold.ttf",
+            "size": 60,
+            "color": "ffffff",
+            "max_chars": 60,
+            "y": 200,  # Внизу для градиента
+            "line_spacing": 8,
+            "max_width": 750,
         },
         "text": {
-            "font": "Geometria",
-            "size": 8,
-            "color": "fbfdfb",
-            "max_chars": 80,
-            "x": 650,
-            "y": 440,
-            "w": 718,
-            "h": 320
+            "font": "fonts/Geomrtria-Light.ttf",
+            "size": 38,
+            "color": "ffffff",
+            "max_chars": 450,
+            "line_spacing": 8,
+            "max_width": 750,
         }
     }
 }
@@ -117,23 +111,29 @@ class CarouselService:
             return text
         return text[:max_chars-3] + "..."
     
-    def _wrap_text(self, text: str, max_width: int, font_size: int) -> list[str]:
+    def _wrap_text_improved(self, text: str, max_width_px: int, font_size: int, font_weight: str = "normal") -> list[str]:
         """
-        Разбивает текст на строки с учетом максимальной ширины
-        Простая эвристика: примерно 0.6 * font_size пикселей на символ
+        Улучшенный перенос текста с учетом реальной ширины символов
+        
+        Примерные множители ширины:
+        - Normal font: ~0.55 от font_size
+        - Bold font: ~0.62 от font_size
         """
-        chars_per_line = int(max_width / (font_size * 0.6))
+        char_width = font_size * (0.62 if "Bold" in font_weight else 0.55)
+        chars_per_line = int(max_width_px / char_width)
+        
         words = text.split()
         lines = []
         current_line = []
         current_length = 0
         
         for word in words:
-            word_length = len(word) + 1  # +1 для пробела
+            word_length = len(word) + (1 if current_line else 0)  # +1 для пробела
+            
             if current_length + word_length > chars_per_line and current_line:
                 lines.append(' '.join(current_line))
                 current_line = [word]
-                current_length = word_length
+                current_length = len(word)
             else:
                 current_line.append(word)
                 current_length += word_length
@@ -166,8 +166,8 @@ class CarouselService:
 3. Слайд {slides_count} (cta) — призыв к действию
 
 ВАЖНЫЕ ОГРАНИЧЕНИЯ ПО ДЛИНЕ:
-- Заголовки: МАКСИМУМ 33 символа (для светлого/градиент) или 26 символов (для темного)
-- Текст слайда: МАКСИМУМ 80 символов
+- Заголовки: МАКСИМУМ 60 символов (для хорошей читаемости)
+- Текст слайда: МАКСИМУМ 140 символов
 - Используй короткие, емкие фразы
 - НЕ используй эмодзи
 
@@ -212,13 +212,12 @@ class CarouselService:
         slide: CarouselSlide,
         color_scheme: str = "dark"
     ) -> bytes:
-        """
-        Генерирует изображение слайда наложением текста на шаблон через FFmpeg
+
+        logger.info(f"=== Generating slide {slide.slide_number} ===")
+        logger.info(f"Title: {slide.title}")
+        logger.info(f"Content: {slide.content}")
+        logger.info(f"Color scheme: {color_scheme}")
         
-        Returns:
-            bytes изображения PNG
-        """
-        # Получаем конфигурацию шаблона
         template_config = TEMPLATE_CONFIGS.get(color_scheme)
         if not template_config:
             raise ValueError(f"Неизвестная цветовая схема: {color_scheme}")
@@ -227,64 +226,117 @@ class CarouselService:
         if not os.path.exists(template_path):
             raise FileNotFoundError(f"Шаблон не найден: {template_path}")
         
-        # Обрезаем текст под лимиты
-        title_config = template_config["title"]
-        text_config = template_config["text"]
+        # Конфигурации для заголовка и текста
+        title_cfg = template_config["title"]
+        text_cfg = template_config["text"]
         
-        title = self._truncate_text(slide.title, title_config["max_chars"])
-        content = self._truncate_text(slide.content, text_config["max_chars"])
+        # ИСПРАВЛЕНИЕ: Обрезаем текст под лимиты
+        title = self._truncate_text(slide.title, title_cfg["max_chars"])
+        # Используем content, НЕ пустую строку
+        content = self._truncate_text(slide.content, text_cfg["max_chars"]) if slide.content else ""
         
-        # Разбиваем контент на строки
-        content_lines = self._wrap_text(content, text_config["w"], text_config["size"])
+        # Разбиваем на строки с учетом реальной ширины
+        title_lines = self._wrap_text_improved(
+            title, 
+            title_cfg["max_width"], 
+            title_cfg["size"],
+            title_cfg["font"]
+        )
         
-        # Создаем временный файл для вывода
+        title_start_y = title_cfg["y"]
+        title_font_size = title_cfg["size"]
+        title_line_spacing = title_cfg["line_spacing"]
+
+        title_lines_count = len(title_lines)
+
+        if title_lines_count > 0:
+            title_height = (
+                title_lines_count * title_font_size
+                + (title_lines_count - 1) * title_line_spacing
+            )
+        else:
+            title_height = 0
+
+        content_start_y = title_start_y + title_height + 40
+        content_lines = []
+        if content:
+            content_lines = self._wrap_text_improved(
+                content,
+                text_cfg["max_width"],
+                text_cfg["size"],
+                text_cfg["font"]
+            )
+        
+        # Создаем временный файл
         output_fd, output_path = tempfile.mkstemp(suffix=".png")
         os.close(output_fd)
         
         try:
-            # Собираем FFmpeg фильтры для наложения текста
             filters = []
             
-            # Заголовок
-            title_escaped = title.replace("'", "'\\''").replace(":", "\\:")
-            title_filter = (
-                f"drawtext=text='{title_escaped}':"
-                f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
-                f"fontsize={title_config['size']}:"
-                f"fontcolor=#{title_config['color']}:"
-                f"x={title_config['x']}:y={title_config['y']}:"
-                f"line_spacing=5"
-            )
-            filters.append(title_filter)
+            # === ЗАГОЛОВОК (ОБЯЗАТЕЛЬНО РИСУЕМ) ===
+            title_start_y = title_cfg["y"]
+            if title_lines:  # Проверяем что есть заголовок
+                for i, line in enumerate(title_lines):
+                    line_escaped = line.replace("'", "'\\''").replace(":", "\\:").replace(",", "\\,")
+                    y_pos = title_start_y + (i * (title_cfg["size"] + title_cfg["line_spacing"]))
+                    
+                    # Основной текст с обводкой и тенью
+                    title_filter = (
+                        f"drawtext=text='{line_escaped}':"
+                        f"fontfile=fonts/Geomrtria-Bold.ttf:"
+                        f"fontsize={title_cfg['size']}:"
+                        f"fontcolor=#{title_cfg['color']}:"
+                        f"x=w*0.13:"  # Центрирование
+                        f"y={y_pos}:"
+                    )
+                    
+                    # Добавляем тень если нужно
+                    if title_cfg.get("shadow"):
+                        title_filter += f"shadowx=3:shadowy=3:shadowcolor=black@0.5:"
+                    
+                    title_filter = title_filter.rstrip(":")
+                    filters.append(title_filter)
+                    
+                    logger.info(f"Added title filter for line {i+1}: {line[:30]}...")
             
-            # Контент (многострочный)
-            line_height = text_config["size"] + 5
-            for i, line in enumerate(content_lines):
-                line_escaped = line.replace("'", "'\\''").replace(":", "\\:")
-                y_offset = text_config['y'] + (i * line_height)
-                
-                content_filter = (
-                    f"drawtext=text='{line_escaped}':"
-                    f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:"
-                    f"fontsize={text_config['size']}:"
-                    f"fontcolor=#{text_config['color']}:"
-                    f"x={text_config['x']}:y={y_offset}"
-                )
-                filters.append(content_filter)
+            # === ОСНОВНОЙ ТЕКСТ (КОНТЕНТ СЛАЙДА) ===
+            text_start_y = content_start_y
+            if content_lines:  # Проверяем что есть контент
+                for i, line in enumerate(content_lines):
+                    line_escaped = line.replace("'", "'\\''").replace(":", "\\:").replace(",", "\\,")
+                    y_pos = text_start_y + (i * (text_cfg["size"] + text_cfg["line_spacing"]))
+                    
+                    text_filter = (
+                        f"drawtext=text='{line_escaped}':"
+                        f"fontfile=fonts/Geomrtria-Bold.ttf:"
+                        f"fontsize={text_cfg['size']}:"
+                        f"fontcolor=#{text_cfg['color']}:"
+                        f"x=w*0.13:"
+                        f"y={y_pos}:"
+                    )
+                    
+                    if text_cfg.get("shadow"):
+                        text_filter += f"shadowx=2:shadowy=2:shadowcolor=black@0.5:"
+                    
+                    text_filter = text_filter.rstrip(":")
+                    filters.append(text_filter)
+                    
+                    logger.info(f"Added content filter for line {i+1}: {line[:30]}...")
             
-            # Индикатор слайда (внизу справа)
+            # === ИНДИКАТОР СЛАЙДА ===
             indicator_text = f"{slide.slide_number}/{slide.total_slides}"
             indicator_escaped = indicator_text.replace("'", "'\\''")
             indicator_filter = (
                 f"drawtext=text='{indicator_escaped}':"
-                f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:"
-                f"fontsize=12:"
-                f"fontcolor=#999999:"
-                f"x=w-tw-20:y=h-th-20"
+                f"fontfile=fonts/Geomrtria-Bold.ttf:"
+                f"fontsize=28:"
+                f"fontcolor=#ffffff:"
+                f"x=w-tw-40:y=h-th-40"
             )
             filters.append(indicator_filter)
             
-            # Объединяем фильтры
+            # Объединяем все фильтры
             filter_complex = ",".join(filters)
             
             # Запускаем FFmpeg
@@ -293,6 +345,7 @@ class CarouselService:
                 "-i", template_path,
                 "-vf", filter_complex,
                 "-frames:v", "1",
+                "-q:v", "2",  # Высокое качество
                 output_path
             ]
             
@@ -305,7 +358,7 @@ class CarouselService:
             stdout, stderr = await process.communicate()
             
             if process.returncode != 0:
-                error_msg = stderr.decode()[:500]
+                error_msg = stderr.decode()[:1000]
                 raise Exception(f"FFmpeg error: {error_msg}")
             
             # Читаем результат
@@ -313,7 +366,6 @@ class CarouselService:
                 return f.read()
         
         finally:
-            # Удаляем временный файл
             if os.path.exists(output_path):
                 try:
                     os.unlink(output_path)
@@ -352,7 +404,6 @@ class CarouselService:
                     "error": str(e)
                 })
             
-            # Небольшая задержка между слайдами
             await asyncio.sleep(0.5)
         
         return results

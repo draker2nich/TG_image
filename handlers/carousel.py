@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from aiogram.types import Message, CallbackQuery, BufferedInputFile, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
@@ -477,11 +477,15 @@ async def generate_carousel_images(callback: CallbackQuery, state: FSMContext):
         await state.clear()
 
 async def send_carousel(message, images: list[dict], content: dict):
-    """Отправляет карусель изображений и текст"""
+    """
+    ИСПРАВЛЕННАЯ ВЕРСИЯ: Отправляет карусель изображений ОДНИМ сообщением (media group)
+    и текст отдельным сообщением
+    """
     slides = content.get("slides", [])
     
-    # СНАЧАЛА генерируем все изображения в память
-    images_to_send = []
+    # Создаём media group для отправки всех изображений одним сообщением
+    media_group = []
+    
     for img_data in images:
         slide_num = img_data["slide_number"]
         image_bytes = img_data["image_data"]
@@ -489,26 +493,31 @@ async def send_carousel(message, images: list[dict], content: dict):
         # Находим соответствующий слайд
         slide = next((s for s in slides if s.get("slide_number") == slide_num), None)
         
-        if slide:
-            caption = f"📄 <b>Слайд {slide_num}</b>"
+        # Для первого слайда добавляем общий caption
+        if slide_num == 1:
+            caption = f"📋 <b>Карусель</b> — {content.get('topic', '')}"
         else:
-            caption = f"📄 <b>Слайд {slide_num}</b>"
+            caption = None
         
-        images_to_send.append({
-            "bytes": image_bytes,
-            "caption": caption,
-            "slide_num": slide_num
-        })
+        # Создаем InputMediaPhoto для media group
+        photo = InputMediaPhoto(
+            media=BufferedInputFile(image_bytes, filename=f"slide_{slide_num}.png"),
+            caption=caption,
+            parse_mode="HTML" if caption else None
+        )
+        media_group.append(photo)
     
-    # Отправляем сообщение о начале отправки
-    await message.answer("📤 Отправляю карусель...")
+    # Отправляем ВСЕ изображения ОДНИМ сообщением
+    try:
+        await message.answer_media_group(media=media_group)
+    except Exception as e:
+        logger.error(f"Failed to send media group: {e}")
+        # Fallback: отправляем по одному
+        for img in images:
+            photo = BufferedInputFile(img["image_data"], filename=f"slide_{img['slide_number']}.png")
+            await message.answer_photo(photo=photo, caption=f"📄 Слайд {img['slide_number']}")
     
-    # ТЕПЕРЬ отправляем все изображения подряд без задержек
-    for img in images_to_send:
-        photo = BufferedInputFile(img["bytes"], filename=f"slide_{img['slide_num']}.png")
-        await message.answer_photo(photo=photo, caption=img["caption"], parse_mode="HTML")
-    
-    # Отправляем полный текст всех слайдов
+    # Отправляем полный текст всех слайдов ОТДЕЛЬНЫМ сообщением
     text_content = f"📝 <b>Текст карусели</b>\n\n"
     text_content += f"🎯 Тема: {content.get('topic', '')}\n\n"
     
