@@ -9,7 +9,7 @@ from config import config
 from middlewares.auth import AuthMiddleware
 from handlers import (
     start, avatar_video, seo_article, short_video, 
-    knowledge_base, content_plan, carousel
+    knowledge_base, content_plan, carousel, google_auth
 )
 from services.task_tracker import task_tracker
 
@@ -56,6 +56,7 @@ async def main():
     dp.include_router(knowledge_base.router)
     dp.include_router(content_plan.router)
     dp.include_router(carousel.router)
+    dp.include_router(google_auth.router)  # Новый handler для OAuth
     
     await bot.delete_webhook(drop_pending_updates=True)
     

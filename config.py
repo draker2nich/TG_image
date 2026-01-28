@@ -18,8 +18,9 @@ class Config:
     KIEAI_API_KEY: str = os.getenv("KIEAI_API_KEY", "")
     KIEAI_BASE_URL: str = "https://api.kie.ai"
     
-    # Google Service Account (JSON file path)
-    GOOGLE_SERVICE_ACCOUNT_FILE: str = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "service_account.json")
+    # Google OAuth (вместо Service Account)
+    GOOGLE_CREDENTIALS_FILE: str = os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json")
+    GOOGLE_TOKEN_FILE: str = os.getenv("GOOGLE_TOKEN_FILE", "token.pickle")
     GOOGLE_SPREADSHEET_ID: str = os.getenv("GOOGLE_SPREADSHEET_ID", "")
     GOOGLE_DRIVE_FOLDER_ID: str = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
     
@@ -54,7 +55,7 @@ class Config:
             "telegram": bool(self.BOT_TOKEN),
             "openai": bool(self.OPENAI_API_KEY),
             "kieai": bool(self.KIEAI_API_KEY),
-            "google": bool(self.GOOGLE_SERVICE_ACCOUNT_FILE and os.path.exists(self.GOOGLE_SERVICE_ACCOUNT_FILE)),
+            "google": bool(self.GOOGLE_CREDENTIALS_FILE and os.path.exists(self.GOOGLE_CREDENTIALS_FILE)),
         }
     
     def get_missing_keys(self) -> list[str]:

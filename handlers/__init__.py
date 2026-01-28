@@ -5,6 +5,7 @@ from . import short_video
 from . import knowledge_base
 from . import content_plan
 from . import carousel
+from . import google_auth
 
 __all__ = [
     "start", 
@@ -13,5 +14,6 @@ __all__ = [
     "short_video", 
     "knowledge_base",
     "content_plan",
-    "carousel"
+    "carousel",
+    "google_auth"
 ]

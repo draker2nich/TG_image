@@ -6,16 +6,11 @@ from typing import Optional, Literal
 from dataclasses import dataclass
 import io
 
-from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
 from config import config
-
-SCOPES = [
-    'https://www.googleapis.com/auth/drive.file',
-    'https://www.googleapis.com/auth/spreadsheets'
-]
+from services.google_oauth import google_oauth
 
 @dataclass
 class UploadResult:
@@ -36,42 +31,45 @@ class GoogleService:
     def __init__(self):
         self.spreadsheet_id = config.GOOGLE_SPREADSHEET_ID
         self.drive_folder_id = config.GOOGLE_DRIVE_FOLDER_ID
-        self.service_account_file = config.GOOGLE_SERVICE_ACCOUNT_FILE
         
-        self.creds = None
         self.drive_service = None
         self.sheets_service = None
         self._initialized = False
     
     def is_configured(self) -> bool:
-        return bool(
-            self.service_account_file and 
-            os.path.exists(self.service_account_file)
-        )
+        """Проверяет наличие OAuth credentials"""
+        return google_oauth.is_configured()
+    
+    def is_authorized(self) -> bool:
+        """Проверяет наличие валидного токена"""
+        return google_oauth.is_authorized()
     
     async def initialize(self) -> bool:
-        """Инициализирует сервисы Google API через Service Account"""
+        """Инициализирует сервисы Google API через OAuth"""
         if self._initialized:
             return True
         
         if not self.is_configured():
             return False
         
+        # Проверяем авторизацию
+        if not google_oauth.is_authorized():
+            # Пытаемся обновить токен
+            if not await google_oauth.refresh_token():
+                return False
+        
         try:
             loop = asyncio.get_event_loop()
+            creds = google_oauth.get_credentials()
             
-            self.creds = await loop.run_in_executor(
-                None,
-                lambda: service_account.Credentials.from_service_account_file(
-                    self.service_account_file, scopes=SCOPES
-                )
-            )
+            if not creds:
+                return False
             
             self.drive_service = await loop.run_in_executor(
-                None, lambda: build('drive', 'v3', credentials=self.creds)
+                None, lambda: build('drive', 'v3', credentials=creds)
             )
             self.sheets_service = await loop.run_in_executor(
-                None, lambda: build('sheets', 'v4', credentials=self.creds)
+                None, lambda: build('sheets', 'v4', credentials=creds)
             )
             
             self._initialized = True
@@ -311,5 +309,48 @@ class GoogleService:
         except Exception as e:
             print(f"Update status error: {e}")
             return False
+    
+    async def log_content(
+        self,
+        content_type: str,
+        title: str,
+        status: str,
+        file_url: str = "",
+        platform: str = ""
+    ) -> bool:
+        """
+        Универсальный метод логирования контента
+        Используется для логирования загрузок на Drive
+        """
+        # Маппинг типов контента
+        category_map = {
+            "seo_article": "статья",
+            "video_avatar": "видео с аватаром",
+            "short_video": "видео от сора/вео",
+            "carousel": "пост"
+        }
+        
+        category = category_map.get(content_type, "пост")
+        
+        # Маппинг платформ
+        platform_map = {
+            "blog": "блог",
+            "sora2": "ютуб",
+            "veo3": "ютуб",
+            "veo3_fast": "ютуб",
+            "kling_motion": "инст",
+            "tiktok": "тикток",
+            "instagram": "инст",
+            "youtube": "ютуб"
+        }
+        
+        platform_name = platform_map.get(platform, "инст")
+        
+        return await self.log_content_plan_idea(
+            topic=title,
+            category=category,
+            platform=platform_name,
+            status="Сгенерировано" if status == "uploaded" else "Не сгенерировано"
+        )
 
 google_service = GoogleService()

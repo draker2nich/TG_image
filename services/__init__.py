@@ -1,6 +1,7 @@
 from .openai_service import openai_service
 from .kieai_service import kieai_service
 from .kling_motion_service import kling_motion_service
+from .google_oauth import google_oauth
 from .google_service import google_service
 from .carousel_service import carousel_service
 from .content_plan_service import content_plan_service
@@ -12,6 +13,7 @@ __all__ = [
     "openai_service",
     "kieai_service", 
     "kling_motion_service",
+    "google_oauth",
     "google_service",
     "carousel_service",
     "content_plan_service",
