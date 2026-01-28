@@ -74,7 +74,6 @@ class CarouselStates(StatesGroup):
     """Состояния для каруселей"""
     entering_topic = State()
     selecting_slides_count = State()
-    selecting_style = State()
     selecting_color = State()
     reviewing_content = State()
     editing_slide = State()

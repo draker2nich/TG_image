@@ -1,10 +1,12 @@
 import asyncio
 import json
+import os
+import tempfile
+import subprocess
 from typing import Optional
 from dataclasses import dataclass
 from config import config
 from services.openai_service import openai_service
-from services.kieai_service import kieai_service
 
 @dataclass
 class CarouselSlide:
@@ -21,12 +23,125 @@ class CarouselContent:
     color_scheme: str
     slides: list[CarouselSlide]
 
+# Параметры шаблонов
+TEMPLATE_CONFIGS = {
+    "light": {
+        "file": "templates/carousel/light.png",
+        "title": {
+            "font": "Geometria-Bold",
+            "size": 22,
+            "color": "2a292a",
+            "max_chars": 33,
+            "x": 630,
+            "y": 316,
+            "w": 718,
+            "h": 320
+        },
+        "text": {
+            "font": "Geometria",
+            "size": 14,
+            "color": "2a292a",
+            "max_chars": 80,
+            "x": 630,
+            "y": 650,
+            "w": 718,
+            "h": 320
+        }
+    },
+    "dark": {
+        "file": "templates/carousel/dark.png",
+        "title": {
+            "font": "Geometria-Bold",
+            "size": 12,
+            "color": "fbeacb",
+            "max_chars": 26,
+            "x": 530,
+            "y": 196,
+            "w": 718,
+            "h": 180
+        },
+        "text": {
+            "font": "Geometria",
+            "size": 8,
+            "color": "fbeacb",
+            "max_chars": 80,
+            "x": 650,
+            "y": 440,
+            "w": 718,
+            "h": 320
+        }
+    },
+    "gradient": {
+        "file": "templates/carousel/gradient.png",
+        "title": {
+            "font": "Geometria-Bold",
+            "size": 12,
+            "color": "fbfdfb",
+            "max_chars": 33,
+            "x": 530,
+            "y": 670,
+            "w": 718,
+            "h": 180
+        },
+        "text": {
+            "font": "Geometria",
+            "size": 8,
+            "color": "fbfdfb",
+            "max_chars": 80,
+            "x": 650,
+            "y": 440,
+            "w": 718,
+            "h": 320
+        }
+    }
+}
+
 class CarouselService:
     def __init__(self):
-        self.api_key = config.KIEAI_API_KEY
+        pass
     
     def is_available(self) -> bool:
-        return bool(self.api_key) and openai_service.is_available()
+        return openai_service.is_available() and self._check_ffmpeg()
+    
+    def _check_ffmpeg(self) -> bool:
+        """Проверяет доступность FFmpeg"""
+        try:
+            subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return False
+    
+    def _truncate_text(self, text: str, max_chars: int) -> str:
+        """Обрезает текст до максимального количества символов"""
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars-3] + "..."
+    
+    def _wrap_text(self, text: str, max_width: int, font_size: int) -> list[str]:
+        """
+        Разбивает текст на строки с учетом максимальной ширины
+        Простая эвристика: примерно 0.6 * font_size пикселей на символ
+        """
+        chars_per_line = int(max_width / (font_size * 0.6))
+        words = text.split()
+        lines = []
+        current_line = []
+        current_length = 0
+        
+        for word in words:
+            word_length = len(word) + 1  # +1 для пробела
+            if current_length + word_length > chars_per_line and current_line:
+                lines.append(' '.join(current_line))
+                current_line = [word]
+                current_length = word_length
+            else:
+                current_line.append(word)
+                current_length += word_length
+        
+        if current_line:
+            lines.append(' '.join(current_line))
+        
+        return lines
     
     async def generate_carousel_content(
         self,
@@ -50,10 +165,11 @@ class CarouselService:
 2. Слайды 2-{slides_count-1} (content) — основной контент
 3. Слайд {slides_count} (cta) — призыв к действию
 
-ТРЕБОВАНИЯ:
-- Заголовки: до 50 символов
-- Пункты: до 80 символов
-- Используй эмодзи
+ВАЖНЫЕ ОГРАНИЧЕНИЯ ПО ДЛИНЕ:
+- Заголовки: МАКСИМУМ 33 символа (для светлого/градиент) или 26 символов (для темного)
+- Текст слайда: МАКСИМУМ 80 символов
+- Используй короткие, емкие фразы
+- НЕ используй эмодзи
 
 БАЗА ЗНАНИЙ:
 {kb_content[:2000] if kb_content else 'Пуста.'}
@@ -91,190 +207,154 @@ class CarouselService:
             slides=slides
         )
     
-    def _build_slide_prompt(
-        self,
-        slide: CarouselSlide,
-        style: str,
-        color_scheme: str
-    ) -> str:
-        """Создаёт промпт для генерации изображения через 4o Image API"""
-        
-        style_prompts = {
-            "современный минималистичный": "Modern minimalist design, clean lines, geometric shapes, elegant typography",
-            "яркий и динамичный": "Vibrant dynamic design, bold colors, energetic, eye-catching graphics",
-            "профессиональный строгий": "Professional corporate design, structured layout, business aesthetic",
-            "креативный и игривый": "Creative playful design, fun illustrations, artistic elements"
-        }
-        
-        color_prompts = {
-            "dark": "dark background (#1a1a2e or similar), light text, neon or vibrant accents",
-            "light": "light/white background, dark text, colorful modern accents",
-            "gradient": "beautiful gradient background (purple-blue or orange-pink), white text"
-        }
-        
-        base_style = style_prompts.get(style, style_prompts["современный минималистичный"])
-        color_style = color_prompts.get(color_scheme, color_prompts["dark"])
-        
-        # Формируем контент для слайда
-        if slide.slide_type == "cover":
-            content_desc = f"""Instagram/Telegram carousel COVER slide design.
-Main headline text: "{slide.title}"
-Subtitle: "{slide.content}"
-Make the title prominent and eye-catching."""
-        
-        elif slide.slide_type == "cta":
-            content_desc = f"""Instagram/Telegram carousel CTA (call-to-action) slide design.
-Main text: "{slide.title}"
-Action text: "{slide.content}"
-Include visual elements that encourage action (arrows, buttons, icons)."""
-        
-        else:
-            content_desc = f"""Instagram/Telegram carousel CONTENT slide design.
-Title: "{slide.title}"
-Content/bullet points: {slide.content}
-Layout should be clean and easy to read."""
-
-        return f"""{base_style}. {color_style}.
-
-{content_desc}
-
-Important requirements:
-- Square format (1:1 aspect ratio) for Instagram carousel
-- Slide indicator showing {slide.slide_number}/{slide.total_slides} in bottom corner
-- Text must be clearly readable and properly integrated into the design
-- High quality, professional social media graphic
-- Modern 2024 design trends"""
-    
     async def generate_slide_image(
         self,
         slide: CarouselSlide,
-        style: str = "современный минималистичный",
-        color_scheme: str = "dark",
-        callback_url: Optional[str] = None
-    ) -> dict:
-        """Генерирует изображение через 4o Image API (GPT-4o)"""
-        prompt = self._build_slide_prompt(slide, style, color_scheme)
+        color_scheme: str = "dark"
+    ) -> bytes:
+        """
+        Генерирует изображение слайда наложением текста на шаблон через FFmpeg
         
-        return await kieai_service.generate_4o_image(
-            prompt=prompt,
-            size="1:1",  # Квадрат для карусели
-            n_variants=1,
-            is_enhance=True,  # Улучшение для сложных дизайнов
-            callback_url=callback_url,
-            enable_fallback=True  # Fallback на Flux если GPT-4o недоступен
-        )
+        Returns:
+            bytes изображения PNG
+        """
+        # Получаем конфигурацию шаблона
+        template_config = TEMPLATE_CONFIGS.get(color_scheme)
+        if not template_config:
+            raise ValueError(f"Неизвестная цветовая схема: {color_scheme}")
+        
+        template_path = template_config["file"]
+        if not os.path.exists(template_path):
+            raise FileNotFoundError(f"Шаблон не найден: {template_path}")
+        
+        # Обрезаем текст под лимиты
+        title_config = template_config["title"]
+        text_config = template_config["text"]
+        
+        title = self._truncate_text(slide.title, title_config["max_chars"])
+        content = self._truncate_text(slide.content, text_config["max_chars"])
+        
+        # Разбиваем контент на строки
+        content_lines = self._wrap_text(content, text_config["w"], text_config["size"])
+        
+        # Создаем временный файл для вывода
+        output_fd, output_path = tempfile.mkstemp(suffix=".png")
+        os.close(output_fd)
+        
+        try:
+            # Собираем FFmpeg фильтры для наложения текста
+            filters = []
+            
+            # Заголовок
+            title_escaped = title.replace("'", "'\\''").replace(":", "\\:")
+            title_filter = (
+                f"drawtext=text='{title_escaped}':"
+                f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
+                f"fontsize={title_config['size']}:"
+                f"fontcolor=#{title_config['color']}:"
+                f"x={title_config['x']}:y={title_config['y']}:"
+                f"line_spacing=5"
+            )
+            filters.append(title_filter)
+            
+            # Контент (многострочный)
+            line_height = text_config["size"] + 5
+            for i, line in enumerate(content_lines):
+                line_escaped = line.replace("'", "'\\''").replace(":", "\\:")
+                y_offset = text_config['y'] + (i * line_height)
+                
+                content_filter = (
+                    f"drawtext=text='{line_escaped}':"
+                    f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:"
+                    f"fontsize={text_config['size']}:"
+                    f"fontcolor=#{text_config['color']}:"
+                    f"x={text_config['x']}:y={y_offset}"
+                )
+                filters.append(content_filter)
+            
+            # Индикатор слайда (внизу справа)
+            indicator_text = f"{slide.slide_number}/{slide.total_slides}"
+            indicator_escaped = indicator_text.replace("'", "'\\''")
+            indicator_filter = (
+                f"drawtext=text='{indicator_escaped}':"
+                f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:"
+                f"fontsize=12:"
+                f"fontcolor=#999999:"
+                f"x=w-tw-20:y=h-th-20"
+            )
+            filters.append(indicator_filter)
+            
+            # Объединяем фильтры
+            filter_complex = ",".join(filters)
+            
+            # Запускаем FFmpeg
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", template_path,
+                "-vf", filter_complex,
+                "-frames:v", "1",
+                output_path
+            ]
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode != 0:
+                error_msg = stderr.decode()[:500]
+                raise Exception(f"FFmpeg error: {error_msg}")
+            
+            # Читаем результат
+            with open(output_path, 'rb') as f:
+                return f.read()
+        
+        finally:
+            # Удаляем временный файл
+            if os.path.exists(output_path):
+                try:
+                    os.unlink(output_path)
+                except:
+                    pass
     
     async def generate_carousel_images(
         self,
-        content: CarouselContent,
-        callback_url: Optional[str] = None
+        content: CarouselContent
     ) -> list[dict]:
-        """Генерирует изображения для всех слайдов через 4o Image API"""
-        tasks = []
+        """
+        Генерирует изображения для всех слайдов
+        
+        Returns:
+            list[dict] с полями: slide_number, image_data (bytes), status
+        """
+        results = []
         
         for slide in content.slides:
             try:
-                result = await self.generate_slide_image(
+                image_data = await self.generate_slide_image(
                     slide=slide,
-                    style=content.style,
-                    color_scheme=content.color_scheme,
-                    callback_url=callback_url
+                    color_scheme=content.color_scheme
                 )
                 
-                if result is None:
-                    tasks.append({
-                        "slide_number": slide.slide_number,
-                        "task_id": None,
-                        "status": "error",
-                        "error": "Empty response"
-                    })
-                    continue
-                
-                data = result.get("data") or {}
-                task_id = data.get("taskId")
-                code = result.get("code", 0)
-                
-                tasks.append({
+                results.append({
                     "slide_number": slide.slide_number,
-                    "task_id": task_id,
-                    "status": "pending" if code == 200 and task_id else "error",
-                    "error": result.get("msg") if code != 200 else None
+                    "image_data": image_data,
+                    "status": "success"
                 })
             except Exception as e:
-                tasks.append({
+                results.append({
                     "slide_number": slide.slide_number,
-                    "task_id": None,
+                    "image_data": None,
                     "status": "error",
                     "error": str(e)
                 })
             
-            # Небольшая задержка между запросами
-            await asyncio.sleep(1)
+            # Небольшая задержка между слайдами
+            await asyncio.sleep(0.5)
         
-        return tasks
-    
-    async def wait_for_image(self, task_id: str, timeout: int = 300, poll_interval: int = 10) -> Optional[str]:
-        """Ожидает завершения генерации 4o Image"""
-        import logging
-        logger = logging.getLogger(__name__)
-        elapsed = 0
-        
-        while elapsed < timeout:
-            result = await kieai_service.get_4o_image_status(task_id)
-            logger.info(f"4o Image status for {task_id}: {result}")
-            
-            if result.get("code") != 200:
-                await asyncio.sleep(poll_interval)
-                elapsed += poll_interval
-                continue
-            
-            data = result.get("data", {})
-            success_flag = data.get("successFlag")
-            
-            # successFlag: 0 = generating, 1 = success, 2 = failed
-            if success_flag == 1:
-                # Успешно завершено - по документации kie.ai
-                response = data.get("response")
-                
-                # response может быть dict или None
-                if response and isinstance(response, dict):
-                    # Пробуем оба варианта написания
-                    urls = response.get("result_urls") or response.get("resultUrls") or []
-                    if urls:
-                        logger.info(f"4o Image completed: {urls[0]}")
-                        return urls[0]
-                
-                # Fallback - проверяем другие поля
-                for key in ["resultUrls", "result_urls", "imageUrl", "url"]:
-                    val = data.get(key)
-                    if val:
-                        if isinstance(val, list) and val:
-                            logger.info(f"4o Image completed (fallback {key}): {val[0]}")
-                            return val[0]
-                        elif isinstance(val, str):
-                            logger.info(f"4o Image completed (fallback {key}): {val}")
-                            return val
-                
-                logger.warning(f"4o Image success but no URL found in: {data}")
-                return None
-            
-            elif success_flag == 2:
-                error_msg = data.get("errorMessage", "Unknown error")
-                logger.error(f"4o Image generation failed: {error_msg}")
-                return None
-            
-            # success_flag == 0, ещё генерируется
-            progress = data.get("progress", "0.00")
-            try:
-                pct = float(progress) * 100
-            except:
-                pct = 0
-            logger.info(f"4o Image progress: {pct:.1f}%")
-            
-            await asyncio.sleep(poll_interval)
-            elapsed += poll_interval
-        
-        logger.warning(f"4o Image timeout for {task_id}")
-        return None
-    
+        return results
+
 carousel_service = CarouselService()
