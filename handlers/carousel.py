@@ -545,9 +545,10 @@ async def send_carousel(message, images: list[dict], content: dict):
         text_content += f"<b>{type_emoji} Слайд {slide.get('slide_number')}: {slide.get('title')}</b>\n"
         text_content += f"{slide.get('content', '')}\n\n"
     
-    # Кнопки действий
+    # ИСПРАВЛЕНИЕ: Добавляем кнопку главного меню
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="🔄 Сгенерировать заново", callback_data="crs:retry"))
+    builder.row(InlineKeyboardButton(text="🎨 Создать новую карусель", callback_data="menu:carousel"))
     builder.row(InlineKeyboardButton(text="⬅️ Главное меню", callback_data="menu:main"))
     
     await message.answer(

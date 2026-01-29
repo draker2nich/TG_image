@@ -370,6 +370,17 @@ async def download_plan(callback: CallbackQuery, state: FSMContext):
         file,
         caption=f"📅 Контент-план: {topic}"
     )
+    
+    # ИСПРАВЛЕНИЕ: Добавляем кнопку главного меню после скачивания
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="📅 Создать новый план", callback_data="menu:content_plan"))
+    builder.row(InlineKeyboardButton(text="⬅️ Главное меню", callback_data="menu:main"))
+    
+    await callback.message.answer(
+        "✅ План успешно скачан!\n\nВыберите следующее действие:",
+        reply_markup=builder.as_markup()
+    )
+    
     await callback.answer("📥 План скачан!")
 
 @router.callback_query(ContentPlanStates.viewing_plan, F.data == "plan:script")
@@ -420,33 +431,36 @@ async def generate_script_for_idea(callback: CallbackQuery, state: FSMContext):
         plan["ideas"] = ideas
         await state.update_data(content_plan=plan)
         
+        # ИСПРАВЛЕНИЕ: Добавляем кнопки главного меню
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="📥 Скачать сценарий", callback_data=f"plan:download_script:{idx}"))
+        builder.row(InlineKeyboardButton(text="🎭 Создать видео с аватаром", callback_data=f"plan:to_avatar:{idx}"))
+        builder.row(InlineKeyboardButton(text="⬅️ К плану", callback_data="plan:back_to_plan"))
+        builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main"))
+        
         if len(script) > 3500:
             parts = [script[i:i+3500] for i in range(0, len(script), 3500)]
             for i, part in enumerate(parts[:-1]):
                 await callback.message.answer(f"📝 Сценарий (часть {i+1}):\n\n{part}")
             await callback.message.answer(
                 f"📝 Сценарий (часть {len(parts)}):\n\n{parts[-1]}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="📥 Скачать сценарий", callback_data=f"plan:download_script:{idx}")],
-                    [InlineKeyboardButton(text="⬅️ К плану", callback_data="plan:back_to_plan")]
-                ])
+                reply_markup=builder.as_markup()
             )
         else:
             await callback.message.edit_text(
                 f"📝 <b>Сценарий: {idea.title}</b>\n\n{script}",
                 parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="📥 Скачать", callback_data=f"plan:download_script:{idx}")],
-                    [InlineKeyboardButton(text="🎭 Создать видео с аватаром", callback_data=f"plan:to_avatar:{idx}")],
-                    [InlineKeyboardButton(text="⬅️ К плану", callback_data="plan:back_to_plan")]
-                ])
+                reply_markup=builder.as_markup()
             )
     except Exception as e:
+        # ИСПРАВЛЕНИЕ: Кнопка главного меню при ошибке
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="⬅️ К плану", callback_data="plan:back_to_plan"))
+        builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main"))
+        
         await callback.message.edit_text(
             f"❌ Ошибка генерации: {e}",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ К плану", callback_data="plan:back_to_plan")]
-            ])
+            reply_markup=builder.as_markup()
         )
     
     await callback.answer()

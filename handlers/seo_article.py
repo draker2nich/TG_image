@@ -240,10 +240,14 @@ async def confirm_and_generate_article(callback: CallbackQuery, state: FSMContex
         
         await state.clear()
         
-        # Кнопка главного меню
+        # ИСПРАВЛЕНИЕ: Кнопка главного меню после генерации
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="📝 Создать новую статью", callback_data="menu:seo"))
+        builder.row(InlineKeyboardButton(text="⬅️ Главное меню", callback_data="menu:main"))
+        
         await callback.message.answer(
-            "Выберите следующее действие:",
-            reply_markup=back_to_menu_kb()
+            "✅ Статья успешно создана!\n\nВыберите следующее действие:",
+            reply_markup=builder.as_markup()
         )
         
     except Exception as e:
