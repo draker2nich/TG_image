@@ -8,7 +8,7 @@ class ContentIdea:
     """Идея для контента"""
     title: str
     hook: str
-    format: str  # video, reel, article, carousel
+    format: str  # video, reel, article, carousel, avatar_video
     platform: str  # tiktok, instagram, youtube, blog
     description: str
     key_points: list[str]
@@ -56,7 +56,7 @@ class ContentPlanService:
 Для каждой идеи укажи:
 - Цепляющий заголовок
 - Хук (первые 3 секунды)
-- Формат (video/reel/carousel/article)
+- Формат (video/reel/carousel/article/avatar_video)
 - Платформу
 - Описание концепции
 - Ключевые точки сценария
@@ -132,7 +132,7 @@ class ContentPlanService:
             total_posts = days * posts_per_day * len(platforms)
             
             kb_content = openai_service._load_knowledge_base()
-            comp_content = openai_service._load_competitors_content(platforms)  # Только для выбранных платформ
+            comp_content = openai_service._load_competitors_content(platforms)
             
             system = f"""Ты — стратег контент-маркетинга.
     Создай детальный контент-план с учётом:
@@ -150,14 +150,35 @@ class ContentPlanService:
     Анализ конкурентов:
     {json.dumps(analysis, ensure_ascii=False) if analysis else 'Не предоставлен.'}
 
-    Создай план в формате JSON:
+    ВАЖНО: Используй ВСЕ доступные категории контента для КАЖДОЙ платформы:
+    
+    Для TikTok:
+    - "video" — короткие видео от Sora/Veo (15-60 сек)
+    - "avatar_video" — видео с AI-аватаром (10-30 сек)
+    - "carousel" — карусель изображений (5-10 слайдов)
+    
+    Для Instagram:
+    - "reel" — reels от Sora/Veo (15-90 сек)
+    - "avatar_video" — видео с AI-аватаром (10-30 сек)
+    - "carousel" — карусельные посты (5-10 слайдов)
+    
+    Для YouTube:
+    - "video" — shorts от Sora/Veo (15-60 сек)
+    - "avatar_video" — видео с AI-аватаром (10-30 сек)
+    - "article" — описание к видео / скрипт
+    
+    Для Blog:
+    - "article" — SEO-статьи
+    - "carousel" — инфографика
+
+    Создай план в формате JSON с РАВНОМЕРНЫМ распределением всех категорий:
     {{
         "ideas": [
             {{
                 "title": "Заголовок",
                 "hook": "Хук",
-                "format": "video/reel/carousel",
-                "platform": "tiktok/instagram/youtube",
+                "format": "video/reel/carousel/article/avatar_video",
+                "platform": "tiktok/instagram/youtube/blog",
                 "description": "Описание",
                 "key_points": ["пункт1", "пункт2", "пункт3"],
                 "hashtags": ["#tag1", "#tag2"],
@@ -166,7 +187,9 @@ class ContentPlanService:
                 "inspiration_source": "На основе анализа конкурентов"
             }}
         ]
-    }}"""
+    }}
+    
+    ОБЯЗАТЕЛЬНО чередуй форматы для каждой платформы!"""
 
             response = await openai_service.client.chat.completions.create(
                 model=openai_service.model,
@@ -177,7 +200,13 @@ class ContentPlanService:
                         f"Период: {period} ({days} дней)\n"
                         f"Платформы: {', '.join(platforms)}\n"
                         f"Постов в день на платформу: {posts_per_day}\n"
-                        f"Всего нужно идей: {total_posts}"
+                        f"Всего нужно идей: {total_posts}\n\n"
+                        f"ВАЖНО: Для каждой платформы используй ВСЕ доступные форматы:\n"
+                        f"- Короткие видео (video/reel)\n"
+                        f"- Видео с аватаром (avatar_video)\n"
+                        f"- Карусели (carousel)\n"
+                        f"- Статьи (article для YouTube/Blog)\n\n"
+                        f"Чередуй форматы равномерно!"
                     )}
                 ],
                 max_tokens=6000,
@@ -223,7 +252,7 @@ class ContentPlanService:
 {kb_content[:2000] if kb_content else 'Пуста.'}
 
 Формат сценария:
-1. ХУКИ (первые 3 сек) - цепляющее начало
+1. ХУК (первые 3 сек) - цепляющее начало
 2. ОСНОВНАЯ ЧАСТЬ - раскрытие темы
 3. ПРИЗЫВ К ДЕЙСТВИЮ - что делать зрителю
 

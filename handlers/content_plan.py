@@ -16,6 +16,7 @@ router = Router()
 FORMAT_TO_CATEGORY = {
     "video": "видео от сора/вео",
     "reel": "видео от сора/вео",
+    "avatar_video": "видео с аватаром",
     "carousel": "пост",
     "article": "статья"
 }

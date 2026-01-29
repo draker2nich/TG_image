@@ -36,6 +36,8 @@ class AvatarVideoStates(StatesGroup):
 class SEOArticleStates(StatesGroup):
     """Состояния для SEO-статей"""
     waiting_topic = State()
+    confirming_outline = State()  # Новое
+    editing_outline = State()     # Новое
 
 
 class ShortVideoStates(StatesGroup):

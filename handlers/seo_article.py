@@ -2,6 +2,8 @@ from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardButton
 
 from states.generation_states import SEOArticleStates
 from keyboards.menus import cancel_kb, back_to_menu_kb, cancel_and_back_kb
@@ -12,6 +14,17 @@ router = Router()
 
 # ID папки для статей на Google Drive
 SEO_ARTICLES_FOLDER_ID = "1WDx-R5yz0nmTIHbLT4k_b5OzfTRwa8DH"
+
+def confirm_outline_kb():
+    """Кнопки для подтверждения структуры"""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✅ Использовать эту структуру", callback_data="seo:confirm_outline"),
+        InlineKeyboardButton(text="✏️ Изменить заголовки", callback_data="seo:edit_outline")
+    )
+    builder.row(InlineKeyboardButton(text="🔄 Сгенерировать новую структуру", callback_data="seo:regenerate_outline"))
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
+    return builder.as_markup()
 
 async def save_article_to_docx(article: str, seo_title: str = "") -> bytes:
     """Сохраняет статью в формате DOCX с правильным форматированием"""
@@ -55,13 +68,11 @@ async def save_article_to_docx(article: str, seo_title: str = "") -> bytes:
             
         # Обычный текст
         else:
-            # Убираем markdown форматирование
             clean_line = line
             
             # Обрабатываем списки
             if line.startswith('- ') or line.startswith('* '):
                 clean_line = line[2:].strip()
-                # Убираем markdown bold/italic
                 clean_line = re.sub(r'\*\*(.+?)\*\*', r'\1', clean_line)
                 clean_line = re.sub(r'\*(.+?)\*', r'\1', clean_line)
                 clean_line = re.sub(r'__(.+?)__', r'\1', clean_line)
@@ -71,7 +82,6 @@ async def save_article_to_docx(article: str, seo_title: str = "") -> bytes:
             # Нумерованные списки
             elif re.match(r'^\d+\.\s', line):
                 clean_line = re.sub(r'^\d+\.\s', '', line).strip()
-                # Убираем markdown bold/italic
                 clean_line = re.sub(r'\*\*(.+?)\*\*', r'\1', clean_line)
                 clean_line = re.sub(r'\*(.+?)\*', r'\1', clean_line)
                 clean_line = re.sub(r'__(.+?)__', r'\1', clean_line)
@@ -80,7 +90,6 @@ async def save_article_to_docx(article: str, seo_title: str = "") -> bytes:
                 
             # Обычный параграф
             else:
-                # Убираем markdown bold/italic
                 clean_line = re.sub(r'\*\*(.+?)\*\*', r'\1', clean_line)
                 clean_line = re.sub(r'\*(.+?)\*', r'\1', clean_line)
                 clean_line = re.sub(r'__(.+?)__', r'\1', clean_line)
@@ -104,7 +113,7 @@ async def upload_to_google(content: bytes, filename: str, title: str) -> str:
             file_content=content,
             file_name=filename,
             mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            folder_id=SEO_ARTICLES_FOLDER_ID  # Папка для статей
+            folder_id=SEO_ARTICLES_FOLDER_ID
         )
         
         if result.success:
@@ -142,11 +151,12 @@ async def start_seo_flow(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 @router.message(SEOArticleStates.waiting_topic)
-async def process_topic_and_generate(message: Message, state: FSMContext):
-    """Получение темы и генерация статьи сразу"""
+async def process_topic_and_generate_outline(message: Message, state: FSMContext):
+    """Получение темы и генерация структуры"""
     topic = message.text.strip()
+    await state.update_data(topic=topic)
     
-    await message.answer("⏳ Генерирую SEO-статью... Это займёт 1-2 минуты.")
+    await message.answer("⏳ Генерирую структуру статьи...")
     
     try:
         # 1. Генерируем SEO-ключи
@@ -157,49 +167,168 @@ async def process_topic_and_generate(message: Message, state: FSMContext):
         # 2. Генерируем структуру
         outline = await openai_service.generate_seo_outline(topic, keywords, seo_title)
         
-        # 3. Генерируем полную статью
-        article = await openai_service.generate_seo_article(topic, keywords, outline, seo_title)
+        # Сохраняем данные
+        await state.update_data(
+            keywords=keywords,
+            seo_title=seo_title,
+            outline=outline
+        )
+        await state.set_state(SEOArticleStates.confirming_outline)
         
-        # 4. Сохраняем в DOCX с улучшенным форматированием
-        docx_content = await save_article_to_docx(article, seo_title)
+        # Показываем структуру
+        await message.answer(
+            f"📋 <b>Структура статьи</b>\n\n"
+            f"<b>SEO-заголовок:</b> {seo_title}\n\n"
+            f"<b>Ключи:</b> {', '.join(keywords[:5])}\n\n"
+            f"<b>Структура:</b>\n<pre>{outline}</pre>\n\n"
+            f"💡 Вы можете изменить уровни заголовков (H2/H3) перед генерацией.",
+            parse_mode="HTML",
+            reply_markup=confirm_outline_kb()
+        )
+    except Exception as e:
+        await message.answer(
+            f"❌ Ошибка генерации структуры: {e}",
+            reply_markup=back_to_menu_kb()
+        )
+
+@router.callback_query(SEOArticleStates.confirming_outline, F.data == "seo:confirm_outline")
+async def confirm_and_generate_article(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение структуры и генерация статьи"""
+    data = await state.get_data()
+    
+    await callback.message.edit_text("⏳ Генерирую статью... Это займёт 1-2 минуты.")
+    await callback.answer()
+    
+    try:
+        # Генерируем полную статью
+        article = await openai_service.generate_seo_article(
+            topic=data['topic'],
+            keywords=data['keywords'],
+            outline=data['outline'],
+            seo_title=data['seo_title']
+        )
         
-        # 5. Формируем имя файла
+        # Сохраняем в DOCX
+        docx_content = await save_article_to_docx(article, data['seo_title'])
+        
+        # Формируем имя файла
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_topic = "".join(c if c.isalnum() or c in " -_" else "" for c in topic)[:30]
+        safe_topic = "".join(c if c.isalnum() or c in " -_" else "" for c in data['topic'])[:30]
         filename = f"SEO_{safe_topic.replace(' ', '_')}_{timestamp}.docx"
         
-        # 6. Загружаем на Google Drive в папку для статей
-        google_url = await upload_to_google(docx_content, filename, seo_title)
+        # Загружаем на Google Drive
+        google_url = await upload_to_google(docx_content, filename, data['seo_title'])
         
-        # 7. Отправляем пользователю
+        # Отправляем пользователю
         file = BufferedInputFile(docx_content, filename=filename)
         
-        google_info = ""
-        if google_url:
-            google_info = f"\n\n☁️ <a href='{google_url}'>Открыть на Google Drive</a>"
-        
-        await message.answer_document(
+        await callback.message.answer_document(
             file,
             caption=(
                 f"✅ <b>SEO-статья готова!</b>\n\n"
-                f"📰 <b>Заголовок:</b> {seo_title}\n"
-                f"🔑 <b>Ключи:</b> {', '.join(keywords[:5])}"
-                f"{google_info}"
+                f"📰 <b>Заголовок:</b> {data['seo_title']}\n"
+                f"🔑 <b>Ключи:</b> {', '.join(data['keywords'][:5])}"
             ),
             parse_mode="HTML"
         )
         
+        if google_url:
+            await callback.message.answer(
+                f"☁️ <a href='{google_url}'>Открыть на Google Drive</a>",
+                parse_mode="HTML"
+            )
+        
         await state.clear()
         
-        # ИСПРАВЛЕНИЕ: Возвращаем в меню с кнопкой
-        await message.answer(
+        # Кнопка главного меню
+        await callback.message.answer(
             "Выберите следующее действие:",
             reply_markup=back_to_menu_kb()
         )
         
     except Exception as e:
-        await message.answer(
+        await callback.message.answer(
             f"❌ Ошибка генерации: {e}",
             reply_markup=back_to_menu_kb()
         )
         await state.clear()
+
+@router.callback_query(SEOArticleStates.confirming_outline, F.data == "seo:edit_outline")
+async def edit_outline(callback: CallbackQuery, state: FSMContext):
+    """Редактирование структуры"""
+    await state.set_state(SEOArticleStates.editing_outline)
+    await callback.message.edit_text(
+        "✏️ <b>Редактирование структуры</b>\n\n"
+        "Отправьте отредактированную структуру.\n"
+        "Используйте:\n"
+        "• <code>## Заголовок</code> для H2\n"
+        "• <code>### Заголовок</code> для H3\n\n"
+        "Пример:\n"
+        "<pre>## Основной раздел\n"
+        "### Подраздел 1\n"
+        "### Подраздел 2\n"
+        "## Следующий раздел</pre>",
+        parse_mode="HTML",
+        reply_markup=cancel_and_back_kb("seo:back_outline")
+    )
+    await callback.answer()
+
+@router.callback_query(SEOArticleStates.editing_outline, F.data == "seo:back_outline")
+async def back_to_outline(callback: CallbackQuery, state: FSMContext):
+    """Возврат к просмотру структуры"""
+    data = await state.get_data()
+    await state.set_state(SEOArticleStates.confirming_outline)
+    
+    await callback.message.edit_text(
+        f"📋 <b>Структура статьи</b>\n\n"
+        f"<b>SEO-заголовок:</b> {data['seo_title']}\n\n"
+        f"<b>Структура:</b>\n<pre>{data['outline']}</pre>",
+        parse_mode="HTML",
+        reply_markup=confirm_outline_kb()
+    )
+    await callback.answer()
+
+@router.message(SEOArticleStates.editing_outline)
+async def process_edited_outline(message: Message, state: FSMContext):
+    """Обработка отредактированной структуры"""
+    outline = message.text.strip()
+    await state.update_data(outline=outline)
+    await state.set_state(SEOArticleStates.confirming_outline)
+    
+    data = await state.get_data()
+    
+    await message.answer(
+        f"✅ <b>Структура обновлена!</b>\n\n"
+        f"<b>Новая структура:</b>\n<pre>{outline}</pre>",
+        parse_mode="HTML",
+        reply_markup=confirm_outline_kb()
+    )
+
+@router.callback_query(SEOArticleStates.confirming_outline, F.data == "seo:regenerate_outline")
+async def regenerate_outline(callback: CallbackQuery, state: FSMContext):
+    """Перегенерация структуры"""
+    data = await state.get_data()
+    
+    await callback.message.edit_text("⏳ Генерирую новую структуру...")
+    await callback.answer()
+    
+    try:
+        outline = await openai_service.generate_seo_outline(
+            data['topic'], 
+            data['keywords'], 
+            data['seo_title']
+        )
+        
+        await state.update_data(outline=outline)
+        
+        await callback.message.edit_text(
+            f"📋 <b>Новая структура</b>\n\n"
+            f"<pre>{outline}</pre>",
+            parse_mode="HTML",
+            reply_markup=confirm_outline_kb()
+        )
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка: {e}",
+            reply_markup=back_to_menu_kb()
+        )
