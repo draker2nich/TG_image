@@ -478,44 +478,63 @@ async def generate_carousel_images(callback: CallbackQuery, state: FSMContext):
 
 async def send_carousel(message, images: list[dict], content: dict):
     """
-    ИСПРАВЛЕННАЯ ВЕРСИЯ: Отправляет карусель изображений ОДНИМ сообщением (media group)
-    и текст отдельным сообщением
+    ИСПРАВЛЕННАЯ ВЕРСИЯ: Отправляет карусель изображений ОДНИМ media group
+    с правильной обработкой ошибок и чанкингом при необходимости
     """
     slides = content.get("slides", [])
     
-    # Создаём media group для отправки всех изображений одним сообщением
-    media_group = []
+    # Telegram ограничение: максимум 10 медиафайлов в одной media group
+    MAX_MEDIA_PER_GROUP = 10
     
-    for img_data in images:
-        slide_num = img_data["slide_number"]
-        image_bytes = img_data["image_data"]
-        
-        # Находим соответствующий слайд
-        slide = next((s for s in slides if s.get("slide_number") == slide_num), None)
-        
-        # Для первого слайда добавляем общий caption
-        if slide_num == 1:
-            caption = f"📋 <b>Карусель</b> — {content.get('topic', '')}"
-        else:
-            caption = None
-        
-        # Создаем InputMediaPhoto для media group
-        photo = InputMediaPhoto(
-            media=BufferedInputFile(image_bytes, filename=f"slide_{slide_num}.png"),
-            caption=caption,
-            parse_mode="HTML" if caption else None
-        )
-        media_group.append(photo)
+    # Разбиваем на чанки если больше 10 слайдов
+    image_chunks = [images[i:i + MAX_MEDIA_PER_GROUP] for i in range(0, len(images), MAX_MEDIA_PER_GROUP)]
     
-    # Отправляем ВСЕ изображения ОДНИМ сообщением
-    try:
-        await message.answer_media_group(media=media_group)
-    except Exception as e:
-        logger.error(f"Failed to send media group: {e}")
-        # Fallback: отправляем по одному
-        for img in images:
-            photo = BufferedInputFile(img["image_data"], filename=f"slide_{img['slide_number']}.png")
-            await message.answer_photo(photo=photo, caption=f"📄 Слайд {img['slide_number']}")
+    for chunk_idx, chunk in enumerate(image_chunks):
+        media_group = []
+        
+        for img_data in chunk:
+            slide_num = img_data["slide_number"]
+            image_bytes = img_data["image_data"]
+            
+            # Для первого слайда в первом чанке добавляем общий caption
+            if chunk_idx == 0 and slide_num == chunk[0]["slide_number"]:
+                caption = f"📋 <b>Карусель</b> — {content.get('topic', '')}\n📊 {len(images)} слайдов"
+            else:
+                caption = None
+            
+            # Создаем InputMediaPhoto для media group
+            photo = InputMediaPhoto(
+                media=BufferedInputFile(image_bytes, filename=f"slide_{slide_num}.png"),
+                caption=caption,
+                parse_mode="HTML" if caption else None
+            )
+            media_group.append(photo)
+        
+        # Отправляем чанк
+        try:
+            await message.answer_media_group(media=media_group)
+            # Небольшая задержка между чанками если их несколько
+            if len(image_chunks) > 1 and chunk_idx < len(image_chunks) - 1:
+                await asyncio.sleep(1)
+        except Exception as e:
+            logger.error(f"Failed to send media group chunk {chunk_idx + 1}: {e}")
+            # Fallback: отправляем слайды из этого чанка по одному
+            await message.answer(f"⚠️ Ошибка отправки группы, отправляю слайды по одному...")
+            for img in chunk:
+                try:
+                    photo = BufferedInputFile(img["image_data"], filename=f"slide_{img['slide_number']}.png")
+                    type_emoji = {"cover": "🏠", "content": "📄", "cta": "🎯"}.get(
+                        next((s.get("slide_type") for s in slides if s.get("slide_number") == img["slide_number"]), ""), 
+                        "📄"
+                    )
+                    await message.answer_photo(
+                        photo=photo, 
+                        caption=f"{type_emoji} <b>Слайд {img['slide_number']}/{len(images)}</b>",
+                        parse_mode="HTML"
+                    )
+                    await asyncio.sleep(0.5)
+                except Exception as e2:
+                    logger.error(f"Failed to send slide {img['slide_number']}: {e2}")
     
     # Отправляем полный текст всех слайдов ОТДЕЛЬНЫМ сообщением
     text_content = f"📝 <b>Текст карусели</b>\n\n"
@@ -535,7 +554,7 @@ async def send_carousel(message, images: list[dict], content: dict):
         text_content,
         parse_mode="HTML",
         reply_markup=builder.as_markup()
-    )
+    )   
 
 @router.callback_query(CarouselStates.viewing_result, F.data == "crs:retry")
 async def retry_generation(callback: CallbackQuery, state: FSMContext):
