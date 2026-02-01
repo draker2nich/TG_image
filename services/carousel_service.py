@@ -26,13 +26,12 @@ class CarouselContent:
     color_scheme: str
     slides: list[CarouselSlide]
 
-# ИСПРАВЛЕНО: Добавлен fallback шрифт для эмодзи
+# ИСПРАВЛЕНО: Используем Segoe UI Emoji как основной шрифт
 TEMPLATE_CONFIGS = {
     "light": {
         "file": "templates/carousel/light.png",
         "title": {
-            "font": "fonts/Geomrtria-Bold.ttf",
-            "emoji_font": "fonts/Segoe-UI-Emoji.ttf",  # НОВОЕ: Шрифт для эмодзи
+            "font": "fonts/Segoe-UI-Emoji.ttf",  # Основной шрифт - Segoe UI Emoji
             "size": 70,
             "color": "292627",  
             "max_chars": 50,
@@ -41,8 +40,7 @@ TEMPLATE_CONFIGS = {
             "max_width": 635,
         },
         "text": {
-            "font": "fonts/Geomrtria-Light.ttf",
-            "emoji_font": "fonts/Segoe-UI-Emoji.ttf",  # НОВОЕ: Шрифт для эмодзи
+            "font": "fonts/Segoe-UI-Emoji.ttf",  # Основной шрифт - Segoe UI Emoji
             "size": 48,
             "color": "292627",
             "max_chars": 120,
@@ -53,8 +51,7 @@ TEMPLATE_CONFIGS = {
     "dark": {
         "file": "templates/carousel/dark.png",
         "title": {
-            "font": "fonts/Geomrtria-Bold.ttf",
-            "emoji_font": "fonts/Segoe-UI-Emoji.ttf",
+            "font": "fonts/Segoe-UI-Emoji.ttf",  # Основной шрифт - Segoe UI Emoji
             "size": 70,
             "color": "f7e9d0",
             "max_chars": 50,
@@ -63,8 +60,7 @@ TEMPLATE_CONFIGS = {
             "max_width": 750,
         },
         "text": {
-            "font": "fonts/Geomrtria-Light.ttf",
-            "emoji_font": "fonts/Segoe-UI-Emoji.ttf",
+            "font": "fonts/Segoe-UI-Emoji.ttf",  # Основной шрифт - Segoe UI Emoji
             "size": 48,
             "color": "f7e9d0",
             "max_chars": 120,
@@ -75,8 +71,7 @@ TEMPLATE_CONFIGS = {
     "gradient": {
         "file": "templates/carousel/gradient.png",
         "title": {
-            "font": "fonts/Geomrtria-Bold.ttf",
-            "emoji_font": "fonts/Segoe-UI-Emoji.ttf",
+            "font": "fonts/Segoe-UI-Emoji.ttf",  # Основной шрифт - Segoe UI Emoji
             "size": 70,
             "color": "ffffff",
             "max_chars": 50,
@@ -85,8 +80,7 @@ TEMPLATE_CONFIGS = {
             "max_width": 750,
         },
         "text": {
-            "font": "fonts/Geomrtria-Light.ttf",
-            "emoji_font": "fonts/Segoe-UI-Emoji.ttf",
+            "font": "fonts/Segoe-UI-Emoji.ttf",  # Основной шрифт - Segoe UI Emoji
             "size": 48,
             "color": "ffffff",
             "max_chars": 120,
@@ -101,15 +95,28 @@ class CarouselService:
         pass
     
     def is_available(self) -> bool:
-        return openai_service.is_available() and self._check_ffmpeg()
+        """Синхронная проверка (только OpenAI)"""
+        return openai_service.is_available()
     
-    def _check_ffmpeg(self) -> bool:
-        """Проверяет доступность FFmpeg"""
+    async def _check_ffmpeg(self) -> bool:
+        """Проверяет доступность FFmpeg (асинхронно)"""
         try:
-            subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
-            return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
+            process = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-version",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await process.communicate()
+            return process.returncode == 0
+        except (FileNotFoundError, Exception) as e:
+            logger.error(f"FFmpeg check failed: {e}")
             return False
+    
+    async def is_available_async(self) -> bool:
+        """Асинхронная проверка доступности сервиса"""
+        has_openai = openai_service.is_available()
+        has_ffmpeg = await self._check_ffmpeg()
+        return has_openai and has_ffmpeg
     
     def _truncate_text(self, text: str, max_chars: int) -> str:
         """Обрезает текст до максимального количества символов"""
@@ -119,7 +126,7 @@ class CarouselService:
     
     def _wrap_text_justified(self, text: str, max_width_px: int, font_size: int, font_weight: str = "normal") -> list[str]:
         """Перенос текста с выравниванием по ширине"""
-        char_width = font_size * (0.62 if "Bold" in font_weight else 0.55)
+        char_width = font_size * 0.6  # Универсальная ширина для Segoe UI Emoji
         chars_per_line = int(max_width_px / char_width)
         
         words = text.split()
@@ -142,19 +149,6 @@ class CarouselService:
             lines.append(' '.join(current_line))
         
         return lines
-    
-    def _has_emoji(self, text: str) -> bool:
-        """Проверяет наличие эмодзи в тексте"""
-        import re
-        emoji_pattern = re.compile("["
-            u"\U0001F600-\U0001F64F"  # эмоции
-            u"\U0001F300-\U0001F5FF"  # символы
-            u"\U0001F680-\U0001F6FF"  # транспорт
-            u"\U0001F1E0-\U0001F1FF"  # флаги
-            u"\U00002702-\U000027B0"
-            u"\U000024C2-\U0001F251"
-            "]+", flags=re.UNICODE)
-        return bool(emoji_pattern.search(text))
     
     async def generate_carousel_content(
         self,
@@ -302,12 +296,9 @@ class CarouselService:
                     line_escaped = line.replace("'", "'\\''").replace(":", "\\:").replace(",", "\\,")
                     y_pos = title_start_y + (i * (title_font_size + title_line_spacing))
                     
-                    # ИСПРАВЛЕНО: Используем fallback для эмодзи
-                    font_path = title_cfg["emoji_font"] if self._has_emoji(line) else title_cfg["font"]
-                    
                     title_filter = (
                         f"drawtext=text='{line_escaped}':"
-                        f"fontfile={font_path}:"
+                        f"fontfile={title_cfg['font']}:"
                         f"fontsize={title_cfg['size']}:"
                         f"fontcolor=#{title_cfg['color']}:"
                         f"x=w*0.13:"
@@ -331,12 +322,9 @@ class CarouselService:
                         logger.warning(f"Content line {i+1} exceeds bounds (y={y_pos}), skipping")
                         break
                     
-                    # ИСПРАВЛЕНО: Используем fallback для эмодзи
-                    font_path = text_cfg["emoji_font"] if self._has_emoji(line) else text_cfg["font"]
-                    
                     text_filter = (
                         f"drawtext=text='{line_escaped}':"
-                        f"fontfile={font_path}:"
+                        f"fontfile={text_cfg['font']}:"
                         f"fontsize={text_cfg['size']}:"
                         f"fontcolor=#{text_cfg['color']}:"
                         f"x=w*0.13:"
