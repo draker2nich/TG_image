@@ -1,11 +1,11 @@
 import asyncio
 import json
 import os
-import tempfile
-import subprocess
+import io
 import logging
 from typing import Optional
 from dataclasses import dataclass
+from PIL import Image, ImageDraw, ImageFont
 from config import config
 from services.openai_service import openai_service
 
@@ -26,130 +26,253 @@ class CarouselContent:
     color_scheme: str
     slides: list[CarouselSlide]
 
-# ИСПРАВЛЕНО: Geometria для текста + Noto Color Emoji для эмодзи
+# Конфигурация шаблонов
 TEMPLATE_CONFIGS = {
     "light": {
         "file": "templates/carousel/light.png",
         "title": {
             "font": "fonts/Geometria-Bold.otf",
-            "fallback_font": "fonts/NotoColorEmoji.ttf",
+            "emoji_font": "fonts/NotoColorEmoji.ttf",
             "size": 70,
-            "color": "292627",  
+            "color": (41, 38, 39),
             "max_chars": 50,
-            "y": 200,  
+            "y": 200,
+            "x_percent": 0.13,
             "line_spacing": 8,
-            "max_width": 635,
+            "max_width_percent": 0.74,
         },
         "text": {
             "font": "fonts/Geometria.otf",
-            "fallback_font": "fonts/NotoColorEmoji.ttf",
+            "emoji_font": "fonts/NotoColorEmoji.ttf",
             "size": 48,
-            "color": "292627",
+            "color": (41, 38, 39),
             "max_chars": 120,
             "line_spacing": 8,
-            "max_width": 620,
+            "max_width_percent": 0.74,
         }
     },
     "dark": {
         "file": "templates/carousel/dark.png",
         "title": {
             "font": "fonts/Geometria-Bold.otf",
-            "fallback_font": "fonts/NotoColorEmoji.ttf",
+            "emoji_font": "fonts/NotoColorEmoji.ttf",
             "size": 70,
-            "color": "f7e9d0",
+            "color": (247, 233, 208),
             "max_chars": 50,
             "y": 200,
+            "x_percent": 0.13,
             "line_spacing": 8,
-            "max_width": 750,
+            "max_width_percent": 0.74,
         },
         "text": {
             "font": "fonts/Geometria.otf",
-            "fallback_font": "fonts/NotoColorEmoji.ttf",
+            "emoji_font": "fonts/NotoColorEmoji.ttf",
             "size": 48,
-            "color": "f7e9d0",
+            "color": (247, 233, 208),
             "max_chars": 120,
             "line_spacing": 8,
-            "max_width": 750,
+            "max_width_percent": 0.74,
         }
     },
     "gradient": {
         "file": "templates/carousel/gradient.png",
         "title": {
             "font": "fonts/Geometria-Bold.otf",
-            "fallback_font": "fonts/NotoColorEmoji.ttf",
+            "emoji_font": "fonts/NotoColorEmoji.ttf",
             "size": 70,
-            "color": "ffffff",
+            "color": (255, 255, 255),
             "max_chars": 50,
             "y": 200,
+            "x_percent": 0.13,
             "line_spacing": 8,
-            "max_width": 750,
+            "max_width_percent": 0.74,
         },
         "text": {
             "font": "fonts/Geometria.otf",
-            "fallback_font": "fonts/NotoColorEmoji.ttf",
+            "emoji_font": "fonts/NotoColorEmoji.ttf",
             "size": 48,
-            "color": "ffffff",
+            "color": (255, 255, 255),
             "max_chars": 120,
             "line_spacing": 8,
-            "max_width": 750,
+            "max_width_percent": 0.74,
         }
     }
 }
 
+
 class CarouselService:
     def __init__(self):
-        pass
+        self._font_cache = {}
     
     def is_available(self) -> bool:
-        """Синхронная проверка (только OpenAI)"""
         return openai_service.is_available()
     
-    async def _check_ffmpeg(self) -> bool:
-        """Проверяет доступность FFmpeg (асинхронно)"""
-        try:
-            process = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            await process.communicate()
-            return process.returncode == 0
-        except (FileNotFoundError, Exception) as e:
-            logger.error(f"FFmpeg check failed: {e}")
-            return False
+    def _get_font(self, font_path: str, size: int) -> ImageFont.FreeTypeFont:
+        """Кэширует загруженные шрифты"""
+        cache_key = f"{font_path}_{size}"
+        if cache_key not in self._font_cache:
+            try:
+                self._font_cache[cache_key] = ImageFont.truetype(font_path, size)
+            except Exception as e:
+                logger.warning(f"Failed to load font {font_path}: {e}, using default")
+                self._font_cache[cache_key] = ImageFont.load_default()
+        return self._font_cache[cache_key]
     
-    async def is_available_async(self) -> bool:
-        """Асинхронная проверка доступности сервиса"""
-        has_openai = openai_service.is_available()
-        has_ffmpeg = await self._check_ffmpeg()
-        return has_openai and has_ffmpeg
+    def _is_emoji(self, char: str) -> bool:
+        """Проверяет, является ли символ эмодзи"""
+        code = ord(char)
+        emoji_ranges = [
+            (0x1F300, 0x1F9FF),  # Miscellaneous Symbols and Pictographs
+            (0x2600, 0x26FF),    # Miscellaneous Symbols
+            (0x2700, 0x27BF),    # Dingbats
+            (0x1F600, 0x1F64F),  # Emoticons
+            (0x1F680, 0x1F6FF),  # Transport and Map
+            (0x1F1E0, 0x1F1FF),  # Flags
+            (0x2300, 0x23FF),    # Miscellaneous Technical
+            (0x2B50, 0x2B55),    # Stars
+            (0x200D, 0x200D),    # ZWJ
+            (0xFE0F, 0xFE0F),    # Variation Selector
+            (0x1FA00, 0x1FA6F),  # Chess, cards
+            (0x1FA70, 0x1FAFF),  # Symbols and Pictographs Extended-A
+            (0x231A, 0x231B),    # Watch, Hourglass
+            (0x23E9, 0x23F3),    # AV symbols
+            (0x23F8, 0x23FA),    # AV symbols
+            (0x25AA, 0x25AB),    # Squares
+            (0x25B6, 0x25B6),    # Play
+            (0x25C0, 0x25C0),    # Reverse
+            (0x25FB, 0x25FE),    # Squares
+            (0x2614, 0x2615),    # Umbrella, Coffee
+            (0x2648, 0x2653),    # Zodiac
+            (0x267F, 0x267F),    # Wheelchair
+            (0x2693, 0x2693),    # Anchor
+            (0x26A1, 0x26A1),    # High Voltage
+            (0x26AA, 0x26AB),    # Circles
+            (0x26BD, 0x26BE),    # Soccer, Baseball
+            (0x26C4, 0x26C5),    # Snowman, Sun
+            (0x26CE, 0x26CE),    # Ophiuchus
+            (0x26D4, 0x26D4),    # No Entry
+            (0x26EA, 0x26EA),    # Church
+            (0x26F2, 0x26F3),    # Fountain, Golf
+            (0x26F5, 0x26F5),    # Sailboat
+            (0x26FA, 0x26FA),    # Tent
+            (0x26FD, 0x26FD),    # Fuel Pump
+            (0x2702, 0x2702),    # Scissors
+            (0x2705, 0x2705),    # Check Mark
+            (0x2708, 0x270D),    # Airplane etc
+            (0x270F, 0x270F),    # Pencil
+            (0x2712, 0x2712),    # Black Nib
+            (0x2714, 0x2714),    # Check Mark
+            (0x2716, 0x2716),    # X Mark
+            (0x271D, 0x271D),    # Cross
+            (0x2721, 0x2721),    # Star of David
+            (0x2728, 0x2728),    # Sparkles
+            (0x2733, 0x2734),    # Eight Spoked
+            (0x2744, 0x2744),    # Snowflake
+            (0x2747, 0x2747),    # Sparkle
+            (0x274C, 0x274C),    # Cross Mark
+            (0x274E, 0x274E),    # Cross Mark
+            (0x2753, 0x2755),    # Question Marks
+            (0x2757, 0x2757),    # Exclamation
+            (0x2763, 0x2764),    # Hearts
+            (0x2795, 0x2797),    # Plus, Minus, Division
+            (0x27A1, 0x27A1),    # Right Arrow
+            (0x27B0, 0x27B0),    # Curly Loop
+            (0x27BF, 0x27BF),    # Double Curly
+            (0x2934, 0x2935),    # Arrows
+            (0x2B05, 0x2B07),    # Arrows
+            (0x2B1B, 0x2B1C),    # Squares
+            (0x3030, 0x3030),    # Wavy Dash
+            (0x303D, 0x303D),    # Part Alternation
+            (0x3297, 0x3297),    # Circled Ideograph
+            (0x3299, 0x3299),    # Circled Ideograph
+        ]
+        return any(start <= code <= end for start, end in emoji_ranges)
+    
+    def _split_text_and_emoji(self, text: str) -> list[tuple[str, bool]]:
+        """Разбивает текст на сегменты: (текст, is_emoji)"""
+        if not text:
+            return []
+        
+        segments = []
+        current_segment = ""
+        current_is_emoji = self._is_emoji(text[0])
+        
+        for char in text:
+            char_is_emoji = self._is_emoji(char)
+            if char_is_emoji == current_is_emoji:
+                current_segment += char
+            else:
+                if current_segment:
+                    segments.append((current_segment, current_is_emoji))
+                current_segment = char
+                current_is_emoji = char_is_emoji
+        
+        if current_segment:
+            segments.append((current_segment, current_is_emoji))
+        
+        return segments
+    
+    def _draw_text_with_emoji(
+        self,
+        draw: ImageDraw.ImageDraw,
+        image: Image.Image,
+        text: str,
+        position: tuple[int, int],
+        text_font: ImageFont.FreeTypeFont,
+        emoji_font: ImageFont.FreeTypeFont,
+        color: tuple[int, int, int]
+    ) -> int:
+        """Рисует текст с поддержкой эмодзи"""
+        x, y = position
+        segments = self._split_text_and_emoji(text)
+        
+        for segment_text, is_emoji in segments:
+            if is_emoji:
+                try:
+                    bbox = emoji_font.getbbox(segment_text)
+                    if bbox:
+                        emoji_y = y - 5
+                        draw.text((x, emoji_y), segment_text, font=emoji_font, fill=color)
+                        x += bbox[2] - bbox[0]
+                    else:
+                        draw.text((x, y), segment_text, font=text_font, fill=color)
+                        bbox = text_font.getbbox(segment_text)
+                        if bbox:
+                            x += bbox[2] - bbox[0]
+                except Exception as e:
+                    logger.warning(f"Failed to draw emoji: {e}")
+                    draw.text((x, y), "□", font=text_font, fill=color)
+                    x += text_font.getbbox("□")[2]
+            else:
+                draw.text((x, y), segment_text, font=text_font, fill=color)
+                bbox = text_font.getbbox(segment_text)
+                if bbox:
+                    x += bbox[2] - bbox[0]
+        
+        return x - position[0]
     
     def _truncate_text(self, text: str, max_chars: int) -> str:
-        """Обрезает текст до максимального количества символов"""
         if len(text) <= max_chars:
             return text
         return text[:max_chars-3] + "..."
     
-    def _wrap_text_justified(self, text: str, max_width_px: int, font_size: int, font_weight: str = "normal") -> list[str]:
-        """Перенос текста с выравниванием по ширине"""
-        char_width = font_size * 0.6
-        chars_per_line = int(max_width_px / char_width)
-        
+    def _wrap_text(self, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
+        """Переносит текст по словам"""
         words = text.split()
         lines = []
         current_line = []
-        current_length = 0
         
         for word in words:
-            word_length = len(word) + (1 if current_line else 0)
+            test_line = ' '.join(current_line + [word])
+            bbox = font.getbbox(test_line)
+            width = bbox[2] - bbox[0] if bbox else 0
             
-            if current_length + word_length > chars_per_line and current_line:
-                lines.append(' '.join(current_line))
-                current_line = [word]
-                current_length = len(word)
-            else:
+            if width <= max_width:
                 current_line.append(word)
-                current_length += word_length
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                current_line = [word]
         
         if current_line:
             lines.append(' '.join(current_line))
@@ -181,24 +304,17 @@ class CarouselService:
 КРИТИЧЕСКИ ВАЖНЫЕ ОГРАНИЧЕНИЯ ПО ДЛИНЕ:
 - Заголовки: СТРОГО 50 символов МАКСИМУМ (включая эмодзи)
 - Текст слайда: СТРОГО 120 символов МАКСИМУМ (включая эмодзи)
-- Это жёсткие лимиты - превышение приведёт к обрезке текста!
 
 СМАЙЛИКИ:
-- Добавляй МАКСИМУМ 1-2 ПОДХОДЯЩИХ смайлика на слайд
-- Смайлики должны усиливать смысл, не быть случайными
-- Размещай в начале или в конце ключевых мыслей
+- Добавляй 1-2 ПОДХОДЯЩИХ смайлика на слайд
 - Примеры: 💡 для идей, ✅ для преимуществ, 🚀 для действий, 💰 для денег, 📈 для роста
-- ВАЖНО: Смайлики учитываются в лимите символов!
+- Смайлики учитываются в лимите символов!
 
 БАЗА ЗНАНИЙ:
 {kb_content[:2000] if kb_content else 'Пуста.'}
 
 Ответь JSON:
-{{"slides": [{{"slide_number": 1, "slide_type": "cover", "title": "...", "content": "..."}}]}}
-
-ПРОВЕРЬ перед отправкой:
-- Каждый заголовок <= 50 символов
-- Каждый текст <= 120 символов"""
+{{"slides": [{{"slide_number": 1, "slide_type": "cover", "title": "...", "content": "..."}}]}}"""
 
         response = await openai_service.client.chat.completions.create(
             model=openai_service.model,
@@ -230,13 +346,10 @@ class CarouselService:
             slides=slides
         )
     
-    async def generate_slide_image(
-        self,
-        slide: CarouselSlide,
-        color_scheme: str = "dark"
-    ) -> bytes:
-
-        logger.info(f"=== Generating slide {slide.slide_number} ===")
+    async def generate_slide_image(self, slide: CarouselSlide, color_scheme: str = "dark") -> bytes:
+        """Генерирует изображение слайда через Pillow с поддержкой эмодзи"""
+        
+        logger.info(f"=== Generating slide {slide.slide_number} with Pillow ===")
         logger.info(f"Title: {slide.title}")
         logger.info(f"Content: {slide.content}")
         
@@ -248,197 +361,88 @@ class CarouselService:
         if not os.path.exists(template_path):
             raise FileNotFoundError(f"Шаблон не найден: {template_path}")
         
+        image = Image.open(template_path).convert("RGBA")
+        draw = ImageDraw.Draw(image)
+        
+        img_width, img_height = image.size
+        
         title_cfg = template_config["title"]
         text_cfg = template_config["text"]
         
-        # Получаем абсолютные пути к шрифтам
-        title_font = os.path.abspath(title_cfg["font"])
-        text_font = os.path.abspath(text_cfg["font"])
-        emoji_font = os.path.abspath(title_cfg["fallback_font"])
+        title_font = self._get_font(title_cfg["font"], title_cfg["size"])
+        text_font = self._get_font(text_cfg["font"], text_cfg["size"])
         
-        # Проверяем существование шрифтов
-        if not os.path.exists(title_font):
-            raise FileNotFoundError(f"Шрифт заголовка не найден: {title_font}")
-        if not os.path.exists(text_font):
-            raise FileNotFoundError(f"Шрифт текста не найден: {text_font}")
-        if not os.path.exists(emoji_font):
-            logger.warning(f"Шрифт эмодзи не найден: {emoji_font}")
+        emoji_font_path = title_cfg.get("emoji_font", "fonts/NotoColorEmoji.ttf")
+        # Пробуем разные шрифты для эмодзи
+        emoji_font = None
+        for font_path in [emoji_font_path, "fonts/Symbola.otf", "fonts/NotoEmoji-Regular.ttf"]:
+            if os.path.exists(font_path):
+                try:
+                    emoji_font = self._get_font(font_path, title_cfg["size"])
+                    logger.info(f"Using emoji font: {font_path}")
+                    break
+                except:
+                    continue
+        if not emoji_font:
+            emoji_font = title_font
+            logger.warning("No emoji font available, using text font")
         
-        logger.info(f"Title font: {title_font}")
-        logger.info(f"Text font: {text_font}")
-        logger.info(f"Emoji font: {emoji_font}")
-        
-        # Обрезаем текст под лимиты
         title = self._truncate_text(slide.title, title_cfg["max_chars"])
         content = self._truncate_text(slide.content, text_cfg["max_chars"]) if slide.content else ""
         
-        # Разбиваем на строки
-        title_lines = self._wrap_text_justified(
-            title, 
-            title_cfg["max_width"], 
-            title_cfg["size"],
-            "bold"
-        )
+        x_start = int(img_width * title_cfg["x_percent"])
+        max_width = int(img_width * title_cfg["max_width_percent"])
         
-        content_lines = []
-        if content:
-            content_lines = self._wrap_text_justified(
-                content,
-                text_cfg["max_width"],
-                text_cfg["size"],
-                "normal"
-            )
+        title_lines = self._wrap_text(title, title_font, max_width)
+        content_lines = self._wrap_text(content, text_font, max_width) if content else []
         
-        # Расчёт позиций
-        title_start_y = title_cfg["y"]
-        title_font_size = title_cfg["size"]
-        title_line_spacing = title_cfg["line_spacing"]
+        y = title_cfg["y"]
+        for line in title_lines:
+            self._draw_text_with_emoji(draw, image, line, (x_start, y), title_font, emoji_font, title_cfg["color"])
+            y += title_cfg["size"] + title_cfg["line_spacing"]
         
-        title_lines_count = len(title_lines)
-        if title_lines_count > 0:
-            title_height = title_lines_count * (title_font_size + title_line_spacing)
-        else:
-            title_height = 0
-        
-        content_start_y = title_start_y + title_height + 60
-        
-        logger.info(f"Title lines: {title_lines_count}, height: {title_height}")
-        logger.info(f"Content start Y: {content_start_y}")
-        logger.info(f"Content lines: {len(content_lines)}")
-        
-        # Создаем временный файл
-        output_fd, output_path = tempfile.mkstemp(suffix=".png")
-        os.close(output_fd)
+        y += 40
         
         try:
-            filters = []
-            
-            # === ЗАГОЛОВОК ===
-            if title_lines:
-                for i, line in enumerate(title_lines):
-                    # Правильное экранирование для FFmpeg
-                    line_escaped = line.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:").replace("%", "\\%")
-                    y_pos = title_start_y + (i * (title_font_size + title_line_spacing))
-                    
-                    # Используем абсолютный путь и правильно экранируем
-                    title_filter = (
-                        f"drawtext="
-                        f"text='{line_escaped}':"
-                        f"fontfile='{title_font}':"
-                        f"fontsize={title_cfg['size']}:"
-                        f"fontcolor=0x{title_cfg['color']}:"
-                        f"x=(w*0.13):"
-                        f"y={y_pos}"
-                    )
-                    
-                    filters.append(title_filter)
-                    logger.info(f"Title line {i+1}: y={y_pos}, text={line[:30]}...")
-            
-            # === ОСНОВНОЙ ТЕКСТ ===
-            text_start_y = content_start_y
-            if content_lines:
-                text_font_size = text_cfg["size"]
-                text_line_spacing = text_cfg["line_spacing"]
-                
-                for i, line in enumerate(content_lines):
-                    # Правильное экранирование для FFmpeg
-                    line_escaped = line.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:").replace("%", "\\%")
-                    y_pos = text_start_y + (i * (text_font_size + text_line_spacing))
-                    
-                    if y_pos > 1650:
-                        logger.warning(f"Content line {i+1} exceeds bounds (y={y_pos}), skipping")
-                        break
-                    
-                    text_filter = (
-                        f"drawtext="
-                        f"text='{line_escaped}':"
-                        f"fontfile='{text_font}':"
-                        f"fontsize={text_cfg['size']}:"
-                        f"fontcolor=0x{text_cfg['color']}:"
-                        f"x=(w*0.13):"
-                        f"y={y_pos}"
-                    )
-                    
-                    filters.append(text_filter)
-                    logger.info(f"Content line {i+1}: y={y_pos}, text={line[:30]}...")
-            
-            # === ИНДИКАТОР СЛАЙДА ===
-            indicator_text = f"{slide.slide_number}/{slide.total_slides}"
-            indicator_escaped = indicator_text.replace("\\", "\\\\").replace("'", "\\'")
-            indicator_filter = (
-                f"drawtext="
-                f"text='{indicator_escaped}':"
-                f"fontfile='{title_font}':"
-                f"fontsize=28:"
-                f"fontcolor=0xffffff:"
-                f"x=(w-tw-40):"
-                f"y=(h-th-40)"
-            )
-            filters.append(indicator_filter)
-            
-            # Объединяем все фильтры
-            filter_complex = ",".join(filters)
-            
-            logger.info(f"Filter complex: {filter_complex[:200]}...")
-            
-            # Запускаем FFmpeg
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", template_path,
-                "-vf", filter_complex,
-                "-frames:v", "1",
-                "-q:v", "2",
-                output_path
-            ]
-            
-            logger.info(f"Running FFmpeg command...")
-            
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            stdout, stderr = await process.communicate()
-            
-            if process.returncode != 0:
-                error_msg = stderr.decode()
-                logger.error(f"FFmpeg error output: {error_msg}")
-                raise Exception(f"FFmpeg failed with return code {process.returncode}")
-            
-            # Читаем результат
-            if not os.path.exists(output_path):
-                raise Exception("Output file was not created")
-                
-            with open(output_path, 'rb') as f:
-                result = f.read()
-                
-            if len(result) == 0:
-                raise Exception("Output file is empty")
-                
-            logger.info(f"Successfully generated image, size: {len(result)} bytes")
-            return result
+            text_emoji_font = self._get_font(emoji_font_path, text_cfg["size"])
+        except:
+            text_emoji_font = text_font
         
-        finally:
-            if os.path.exists(output_path):
-                try:
-                    os.unlink(output_path)
-                except:
-                    pass
+        for line in content_lines:
+            if y > img_height - 200:
+                break
+            self._draw_text_with_emoji(draw, image, line, (x_start, y), text_font, text_emoji_font, text_cfg["color"])
+            y += text_cfg["size"] + text_cfg["line_spacing"]
+        
+        indicator = f"{slide.slide_number}/{slide.total_slides}"
+        indicator_font = self._get_font(title_cfg["font"], 28)
+        indicator_bbox = indicator_font.getbbox(indicator)
+        indicator_width = indicator_bbox[2] - indicator_bbox[0]
+        indicator_height = indicator_bbox[3] - indicator_bbox[1]
+        
+        draw.text(
+            (img_width - indicator_width - 40, img_height - indicator_height - 40),
+            indicator,
+            font=indicator_font,
+            fill=(255, 255, 255)
+        )
+        
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG", quality=95)
+        buffer.seek(0)
+        
+        result = buffer.getvalue()
+        logger.info(f"Successfully generated image, size: {len(result)} bytes")
+        
+        return result
     
-    async def generate_carousel_images(
-        self,
-        content: CarouselContent
-    ) -> list[dict]:
+    async def generate_carousel_images(self, content: CarouselContent) -> list[dict]:
         """Генерирует изображения для всех слайдов"""
         results = []
         
         for slide in content.slides:
             try:
-                image_data = await self.generate_slide_image(
-                    slide=slide,
-                    color_scheme=content.color_scheme
-                )
+                image_data = await self.generate_slide_image(slide=slide, color_scheme=content.color_scheme)
                 
                 results.append({
                     "slide_number": slide.slide_number,
@@ -454,8 +458,9 @@ class CarouselService:
                     "error": str(e)
                 })
             
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.1)
         
         return results
+
 
 carousel_service = CarouselService()
