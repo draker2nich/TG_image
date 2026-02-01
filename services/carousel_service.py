@@ -26,12 +26,13 @@ class CarouselContent:
     color_scheme: str
     slides: list[CarouselSlide]
 
-# ИСПРАВЛЕНО: Используем Segoe UI Emoji как основной шрифт
+# ИСПРАВЛЕНО: Geometria для текста + Noto Color Emoji для эмодзи
 TEMPLATE_CONFIGS = {
     "light": {
         "file": "templates/carousel/light.png",
         "title": {
-            "font": "fonts/Segoe-UI-Emoji.ttf",  # Основной шрифт - Segoe UI Emoji
+            "font": "fonts/Geometria-Bold.otf",
+            "fallback_font": "fonts/NotoColorEmoji.ttf",
             "size": 70,
             "color": "292627",  
             "max_chars": 50,
@@ -40,7 +41,8 @@ TEMPLATE_CONFIGS = {
             "max_width": 635,
         },
         "text": {
-            "font": "fonts/Segoe-UI-Emoji.ttf",  # Основной шрифт - Segoe UI Emoji
+            "font": "fonts/Geometria.otf",
+            "fallback_font": "fonts/NotoColorEmoji.ttf",
             "size": 48,
             "color": "292627",
             "max_chars": 120,
@@ -51,7 +53,8 @@ TEMPLATE_CONFIGS = {
     "dark": {
         "file": "templates/carousel/dark.png",
         "title": {
-            "font": "fonts/Segoe-UI-Emoji.ttf",  # Основной шрифт - Segoe UI Emoji
+            "font": "fonts/Geometria-Bold.otf",
+            "fallback_font": "fonts/NotoColorEmoji.ttf",
             "size": 70,
             "color": "f7e9d0",
             "max_chars": 50,
@@ -60,7 +63,8 @@ TEMPLATE_CONFIGS = {
             "max_width": 750,
         },
         "text": {
-            "font": "fonts/Segoe-UI-Emoji.ttf",  # Основной шрифт - Segoe UI Emoji
+            "font": "fonts/Geometria.otf",
+            "fallback_font": "fonts/NotoColorEmoji.ttf",
             "size": 48,
             "color": "f7e9d0",
             "max_chars": 120,
@@ -71,7 +75,8 @@ TEMPLATE_CONFIGS = {
     "gradient": {
         "file": "templates/carousel/gradient.png",
         "title": {
-            "font": "fonts/Segoe-UI-Emoji.ttf",  # Основной шрифт - Segoe UI Emoji
+            "font": "fonts/Geometria-Bold.otf",
+            "fallback_font": "fonts/NotoColorEmoji.ttf",
             "size": 70,
             "color": "ffffff",
             "max_chars": 50,
@@ -80,7 +85,8 @@ TEMPLATE_CONFIGS = {
             "max_width": 750,
         },
         "text": {
-            "font": "fonts/Segoe-UI-Emoji.ttf",  # Основной шрифт - Segoe UI Emoji
+            "font": "fonts/Geometria.otf",
+            "fallback_font": "fonts/NotoColorEmoji.ttf",
             "size": 48,
             "color": "ffffff",
             "max_chars": 120,
@@ -126,7 +132,7 @@ class CarouselService:
     
     def _wrap_text_justified(self, text: str, max_width_px: int, font_size: int, font_weight: str = "normal") -> list[str]:
         """Перенос текста с выравниванием по ширине"""
-        char_width = font_size * 0.6  # Универсальная ширина для Segoe UI Emoji
+        char_width = font_size * 0.6
         chars_per_line = int(max_width_px / char_width)
         
         words = text.split()
@@ -245,6 +251,23 @@ class CarouselService:
         title_cfg = template_config["title"]
         text_cfg = template_config["text"]
         
+        # Получаем абсолютные пути к шрифтам
+        title_font = os.path.abspath(title_cfg["font"])
+        text_font = os.path.abspath(text_cfg["font"])
+        emoji_font = os.path.abspath(title_cfg["fallback_font"])
+        
+        # Проверяем существование шрифтов
+        if not os.path.exists(title_font):
+            raise FileNotFoundError(f"Шрифт заголовка не найден: {title_font}")
+        if not os.path.exists(text_font):
+            raise FileNotFoundError(f"Шрифт текста не найден: {text_font}")
+        if not os.path.exists(emoji_font):
+            logger.warning(f"Шрифт эмодзи не найден: {emoji_font}")
+        
+        logger.info(f"Title font: {title_font}")
+        logger.info(f"Text font: {text_font}")
+        logger.info(f"Emoji font: {emoji_font}")
+        
         # Обрезаем текст под лимиты
         title = self._truncate_text(slide.title, title_cfg["max_chars"])
         content = self._truncate_text(slide.content, text_cfg["max_chars"]) if slide.content else ""
@@ -254,7 +277,7 @@ class CarouselService:
             title, 
             title_cfg["max_width"], 
             title_cfg["size"],
-            title_cfg["font"]
+            "bold"
         )
         
         content_lines = []
@@ -263,7 +286,7 @@ class CarouselService:
                 content,
                 text_cfg["max_width"],
                 text_cfg["size"],
-                text_cfg["font"]
+                "normal"
             )
         
         # Расчёт позиций
@@ -293,15 +316,18 @@ class CarouselService:
             # === ЗАГОЛОВОК ===
             if title_lines:
                 for i, line in enumerate(title_lines):
-                    line_escaped = line.replace("'", "'\\''").replace(":", "\\:").replace(",", "\\,")
+                    # Правильное экранирование для FFmpeg
+                    line_escaped = line.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:").replace("%", "\\%")
                     y_pos = title_start_y + (i * (title_font_size + title_line_spacing))
                     
+                    # Используем абсолютный путь и правильно экранируем
                     title_filter = (
-                        f"drawtext=text='{line_escaped}':"
-                        f"fontfile={title_cfg['font']}:"
+                        f"drawtext="
+                        f"text='{line_escaped}':"
+                        f"fontfile='{title_font}':"
                         f"fontsize={title_cfg['size']}:"
-                        f"fontcolor=#{title_cfg['color']}:"
-                        f"x=w*0.13:"
+                        f"fontcolor=0x{title_cfg['color']}:"
+                        f"x=(w*0.13):"
                         f"y={y_pos}"
                     )
                     
@@ -315,7 +341,8 @@ class CarouselService:
                 text_line_spacing = text_cfg["line_spacing"]
                 
                 for i, line in enumerate(content_lines):
-                    line_escaped = line.replace("'", "'\\''").replace(":", "\\:").replace(",", "\\,")
+                    # Правильное экранирование для FFmpeg
+                    line_escaped = line.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:").replace("%", "\\%")
                     y_pos = text_start_y + (i * (text_font_size + text_line_spacing))
                     
                     if y_pos > 1650:
@@ -323,11 +350,12 @@ class CarouselService:
                         break
                     
                     text_filter = (
-                        f"drawtext=text='{line_escaped}':"
-                        f"fontfile={text_cfg['font']}:"
+                        f"drawtext="
+                        f"text='{line_escaped}':"
+                        f"fontfile='{text_font}':"
                         f"fontsize={text_cfg['size']}:"
-                        f"fontcolor=#{text_cfg['color']}:"
-                        f"x=w*0.13:"
+                        f"fontcolor=0x{text_cfg['color']}:"
+                        f"x=(w*0.13):"
                         f"y={y_pos}"
                     )
                     
@@ -336,18 +364,22 @@ class CarouselService:
             
             # === ИНДИКАТОР СЛАЙДА ===
             indicator_text = f"{slide.slide_number}/{slide.total_slides}"
-            indicator_escaped = indicator_text.replace("'", "'\\''")
+            indicator_escaped = indicator_text.replace("\\", "\\\\").replace("'", "\\'")
             indicator_filter = (
-                f"drawtext=text='{indicator_escaped}':"
-                f"fontfile={title_cfg['font']}:"
+                f"drawtext="
+                f"text='{indicator_escaped}':"
+                f"fontfile='{title_font}':"
                 f"fontsize=28:"
-                f"fontcolor=#ffffff:"
-                f"x=w-tw-40:y=h-th-40"
+                f"fontcolor=0xffffff:"
+                f"x=(w-tw-40):"
+                f"y=(h-th-40)"
             )
             filters.append(indicator_filter)
             
             # Объединяем все фильтры
             filter_complex = ",".join(filters)
+            
+            logger.info(f"Filter complex: {filter_complex[:200]}...")
             
             # Запускаем FFmpeg
             cmd = [
@@ -359,6 +391,8 @@ class CarouselService:
                 output_path
             ]
             
+            logger.info(f"Running FFmpeg command...")
+            
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -368,12 +402,22 @@ class CarouselService:
             stdout, stderr = await process.communicate()
             
             if process.returncode != 0:
-                error_msg = stderr.decode()[:1000]
-                raise Exception(f"FFmpeg error: {error_msg}")
+                error_msg = stderr.decode()
+                logger.error(f"FFmpeg error output: {error_msg}")
+                raise Exception(f"FFmpeg failed with return code {process.returncode}")
             
             # Читаем результат
+            if not os.path.exists(output_path):
+                raise Exception("Output file was not created")
+                
             with open(output_path, 'rb') as f:
-                return f.read()
+                result = f.read()
+                
+            if len(result) == 0:
+                raise Exception("Output file is empty")
+                
+            logger.info(f"Successfully generated image, size: {len(result)} bytes")
+            return result
         
         finally:
             if os.path.exists(output_path):
@@ -402,6 +446,7 @@ class CarouselService:
                     "status": "success"
                 })
             except Exception as e:
+                logger.error(f"Failed to generate slide {slide.slide_number}: {e}", exc_info=True)
                 results.append({
                     "slide_number": slide.slide_number,
                     "image_data": None,
