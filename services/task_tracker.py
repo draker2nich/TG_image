@@ -268,6 +268,7 @@ class TaskTracker:
         
         try:
             from aiogram.types import BufferedInputFile
+            from keyboards.menus import back_to_menu_kb
             
             model_names = {
                 "sora2": "Sora 2", "veo3": "Veo 3.1 Quality", "veo3_fast": "Veo 3.1 Fast",
@@ -279,33 +280,34 @@ class TaskTracker:
             has_subtitles = task.subtitles_data and task.subtitles_data.get("ass")
             
             if has_subtitles:
-                await self._bot.send_message(
+                # Отправляем отдельное сообщение о наложении субтитров
+                subs_msg = await self._bot.send_message(
                     chat_id=task.chat_id,
                     text="⏳ Накладываю субтитры через FFmpeg..."
                 )
                 video_with_subs = await self._burn_subtitles(task, video_url)
+                # Удаляем сообщение о процессе
+                try:
+                    await subs_msg.delete()
+                except:
+                    pass
             
             # Загружаем видео на Google Drive
             google_url = await self._upload_to_google(task, video_url)
-            google_info = f"\n☁️ <a href='{google_url}'>Видео на Google Drive</a>" if google_url else ""
             
             # Загружаем аватар на Google Drive (если это Motion Control)
             avatar_google_url = None
             if task.model == "kling_motion" and task.avatar_image_url:
                 avatar_google_url = await self._upload_avatar_to_google(task)
             
-            avatar_info = ""
-            if avatar_google_url:
-                avatar_info = f"\n🖼 <a href='{avatar_google_url}'>Аватар на Google Drive</a>"
+            # Формируем текст ОТДЕЛЬНО от видео
+            caption_text = (
+                f"✅ <b>Видео готово!</b>\n\n"
+                f"🎬 {model_names.get(task.model, task.model)}\n"
+                f"🆔 <code>{task.task_id}</code>"
+            )
             
-            subtitle_info = ""
-            if has_subtitles:
-                if video_with_subs:
-                    subtitle_info = "\n📝 Субтитры: ✅ наложены (FFmpeg)"
-                else:
-                    subtitle_info = "\n📝 Субтитры: ⚠️ не удалось наложить"
-            
-            # Отправляем видео
+            # Отправляем видео БЕЗ больших caption
             if video_with_subs:
                 video_file = BufferedInputFile(
                     video_with_subs,
@@ -314,11 +316,7 @@ class TaskTracker:
                 await self._bot.send_video(
                     chat_id=task.chat_id,
                     video=video_file,
-                    caption=(
-                        f"✅ <b>Видео с субтитрами готово!</b>\n\n"
-                        f"🎬 {model_names.get(task.model, task.model)}\n"
-                        f"🆔 <code>{task.task_id}</code>{subtitle_info}{google_info}{avatar_info}"
-                    ),
+                    caption="✅ Видео с субтитрами готово!",
                     parse_mode="HTML"
                 )
             else:
@@ -326,34 +324,64 @@ class TaskTracker:
                     await self._bot.send_video(
                         chat_id=task.chat_id,
                         video=video_url,
-                        caption=(
-                            f"✅ <b>Видео готово!</b>\n\n"
-                            f"🎬 {model_names.get(task.model, task.model)}\n"
-                            f"🆔 <code>{task.task_id}</code>{subtitle_info}{google_info}{avatar_info}"
-                        ),
+                        caption="✅ Видео готово!",
                         parse_mode="HTML"
                     )
                 except Exception:
                     await self._bot.send_message(
                         chat_id=task.chat_id,
-                        text=(
-                            f"✅ <b>Видео готово!</b>\n\n"
-                            f"🎬 {model_names.get(task.model, task.model)}\n"
-                            f"🔗 <a href='{video_url}'>Скачать видео</a>\n"
-                            f"🆔 <code>{task.task_id}</code>{subtitle_info}{google_info}{avatar_info}"
-                        ),
+                        text=f"✅ <b>Видео готово!</b>\n\n🔗 <a href='{video_url}'>Скачать видео</a>",
                         parse_mode="HTML"
                     )
             
-            # Отправляем SRT файл отдельно
+            # Отправляем SRT файл отдельно если есть
             if has_subtitles:
                 await self._send_subtitles_files(task)
+            
+            # Отправляем ИНФОРМАЦИЮ отдельным сообщением
+            info_parts = [caption_text]
+            
+            if has_subtitles:
+                if video_with_subs:
+                    info_parts.append("\n📝 Субтитры: ✅ наложены (FFmpeg)")
+                else:
+                    info_parts.append("\n📝 Субтитры: ⚠️ не удалось наложить")
+            
+            if google_url:
+                info_parts.append(f"\n☁️ <a href='{google_url}'>Видео на Google Drive</a>")
+            
+            if avatar_google_url:
+                info_parts.append(f"\n🖼 <a href='{avatar_google_url}'>Аватар на Google Drive</a>")
+            
+            await self._bot.send_message(
+                chat_id=task.chat_id,
+                text="".join(info_parts),
+                parse_mode="HTML",
+                reply_markup=back_to_menu_kb()
+            )
+            
+            # ФИНАЛЬНОЕ СООБЩЕНИЕ с кнопкой меню
+            await self._bot.send_message(
+                chat_id=task.chat_id,
+                text="Выберите следующее действие:",
+                reply_markup=back_to_menu_kb()
+            )
             
             logger.info(f"Task {task.task_id} completed, user notified")
             
         except Exception as e:
             logger.error(f"Failed to notify: {e}", exc_info=True)
-    
+            # Отправляем кнопку меню даже при ошибке
+            try:
+                from keyboards.menus import back_to_menu_kb
+                await self._bot.send_message(
+                    chat_id=task.chat_id,
+                    text="⚠️ Возникла ошибка при отправке результата.\nВыберите действие:",
+                    reply_markup=back_to_menu_kb()
+                )
+            except:
+                pass
+
     async def _notify_failure(self, task: VideoTask, error: Optional[str]):
         if not self._bot:
             return
