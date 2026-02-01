@@ -26,66 +26,72 @@ class CarouselContent:
     color_scheme: str
     slides: list[CarouselSlide]
 
-# УЛУЧШЕННЫЕ параметры шаблонов
+# ИСПРАВЛЕНО: Добавлен fallback шрифт для эмодзи
 TEMPLATE_CONFIGS = {
     "light": {
         "file": "templates/carousel/light.png",
         "title": {
             "font": "fonts/Geomrtria-Bold.ttf",
+            "emoji_font": "fonts/Segoe-UI-Emoji.ttf",  # НОВОЕ: Шрифт для эмодзи
             "size": 70,
             "color": "292627",  
-            "max_chars": 50,  # Уменьшено с 60
+            "max_chars": 50,
             "y": 200,  
             "line_spacing": 8,
-            "max_width": 635,  # НЕ ИЗМЕНЯТЬ
+            "max_width": 635,
         },
         "text": {
             "font": "fonts/Geomrtria-Light.ttf",
+            "emoji_font": "fonts/Segoe-UI-Emoji.ttf",  # НОВОЕ: Шрифт для эмодзи
             "size": 48,
             "color": "292627",
-            "max_chars": 120,  # Уменьшено с 450
+            "max_chars": 120,
             "line_spacing": 8,
-            "max_width": 620,  # НЕ ИЗМЕНЯТЬ
+            "max_width": 620,
         }
     },
     "dark": {
         "file": "templates/carousel/dark.png",
         "title": {
             "font": "fonts/Geomrtria-Bold.ttf",
+            "emoji_font": "fonts/Segoe-UI-Emoji.ttf",
             "size": 70,
             "color": "f7e9d0",
-            "max_chars": 50,  # Уменьшено с 60
+            "max_chars": 50,
             "y": 200,
             "line_spacing": 8,
-            "max_width": 750,  # НЕ ИЗМЕНЯТЬ
+            "max_width": 750,
         },
         "text": {
             "font": "fonts/Geomrtria-Light.ttf",
+            "emoji_font": "fonts/Segoe-UI-Emoji.ttf",
             "size": 48,
             "color": "f7e9d0",
-            "max_chars": 120,  # Уменьшено с 450
+            "max_chars": 120,
             "line_spacing": 8,
-            "max_width": 750,  # НЕ ИЗМЕНЯТЬ
+            "max_width": 750,
         }
     },
     "gradient": {
         "file": "templates/carousel/gradient.png",
         "title": {
             "font": "fonts/Geomrtria-Bold.ttf",
+            "emoji_font": "fonts/Segoe-UI-Emoji.ttf",
             "size": 70,
             "color": "ffffff",
-            "max_chars": 50,  # Уменьшено с 60
+            "max_chars": 50,
             "y": 200,
             "line_spacing": 8,
-            "max_width": 750,  # НЕ ИЗМЕНЯТЬ
+            "max_width": 750,
         },
         "text": {
             "font": "fonts/Geomrtria-Light.ttf",
+            "emoji_font": "fonts/Segoe-UI-Emoji.ttf",
             "size": 48,
             "color": "ffffff",
-            "max_chars": 120,  # Уменьшено с 450
+            "max_chars": 120,
             "line_spacing": 8,
-            "max_width": 750,  # НЕ ИЗМЕНЯТЬ
+            "max_width": 750,
         }
     }
 }
@@ -112,11 +118,7 @@ class CarouselService:
         return text[:max_chars-3] + "..."
     
     def _wrap_text_justified(self, text: str, max_width_px: int, font_size: int, font_weight: str = "normal") -> list[str]:
-        """
-        Перенос текста с выравниванием по ширине (justify)
-        
-        Для FFmpeg используем drawtext с text_w для точного контроля
-        """
+        """Перенос текста с выравниванием по ширине"""
         char_width = font_size * (0.62 if "Bold" in font_weight else 0.55)
         chars_per_line = int(max_width_px / char_width)
         
@@ -140,6 +142,19 @@ class CarouselService:
             lines.append(' '.join(current_line))
         
         return lines
+    
+    def _has_emoji(self, text: str) -> bool:
+        """Проверяет наличие эмодзи в тексте"""
+        import re
+        emoji_pattern = re.compile("["
+            u"\U0001F600-\U0001F64F"  # эмоции
+            u"\U0001F300-\U0001F5FF"  # символы
+            u"\U0001F680-\U0001F6FF"  # транспорт
+            u"\U0001F1E0-\U0001F1FF"  # флаги
+            u"\U00002702-\U000027B0"
+            u"\U000024C2-\U0001F251"
+            "]+", flags=re.UNICODE)
+        return bool(emoji_pattern.search(text))
     
     async def generate_carousel_content(
         self,
@@ -257,21 +272,18 @@ class CarouselService:
                 text_cfg["font"]
             )
         
-        # КРИТИЧЕСКИ ВАЖНО: правильный расчёт высоты
+        # Расчёт позиций
         title_start_y = title_cfg["y"]
         title_font_size = title_cfg["size"]
         title_line_spacing = title_cfg["line_spacing"]
         
-        # Высота блока заголовка (с учётом эмодзи и переносов)
         title_lines_count = len(title_lines)
         if title_lines_count > 0:
-            # Эмодзи могут занимать больше места, добавляем запас
             title_height = title_lines_count * (title_font_size + title_line_spacing)
         else:
             title_height = 0
         
-        # Позиция контента ПОСЛЕ заголовка с большим отступом
-        content_start_y = title_start_y + title_height + 60  # Увеличен отступ с 40 до 60
+        content_start_y = title_start_y + title_height + 60
         
         logger.info(f"Title lines: {title_lines_count}, height: {title_height}")
         logger.info(f"Content start Y: {content_start_y}")
@@ -290,9 +302,12 @@ class CarouselService:
                     line_escaped = line.replace("'", "'\\''").replace(":", "\\:").replace(",", "\\,")
                     y_pos = title_start_y + (i * (title_font_size + title_line_spacing))
                     
+                    # ИСПРАВЛЕНО: Используем fallback для эмодзи
+                    font_path = title_cfg["emoji_font"] if self._has_emoji(line) else title_cfg["font"]
+                    
                     title_filter = (
                         f"drawtext=text='{line_escaped}':"
-                        f"fontfile={title_cfg['font']}:"
+                        f"fontfile={font_path}:"
                         f"fontsize={title_cfg['size']}:"
                         f"fontcolor=#{title_cfg['color']}:"
                         f"x=w*0.13:"
@@ -312,14 +327,16 @@ class CarouselService:
                     line_escaped = line.replace("'", "'\\''").replace(":", "\\:").replace(",", "\\,")
                     y_pos = text_start_y + (i * (text_font_size + text_line_spacing))
                     
-                    # Проверяем, что не выходим за границы (примерно 1700px для 1920px высоты)
                     if y_pos > 1650:
                         logger.warning(f"Content line {i+1} exceeds bounds (y={y_pos}), skipping")
                         break
                     
+                    # ИСПРАВЛЕНО: Используем fallback для эмодзи
+                    font_path = text_cfg["emoji_font"] if self._has_emoji(line) else text_cfg["font"]
+                    
                     text_filter = (
                         f"drawtext=text='{line_escaped}':"
-                        f"fontfile={text_cfg['font']}:"
+                        f"fontfile={font_path}:"
                         f"fontsize={text_cfg['size']}:"
                         f"fontcolor=#{text_cfg['color']}:"
                         f"x=w*0.13:"
