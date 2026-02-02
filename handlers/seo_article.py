@@ -15,91 +15,129 @@ router = Router()
 # ID папки для статей на Google Drive
 SEO_ARTICLES_FOLDER_ID = "1WDx-R5yz0nmTIHbLT4k_b5OzfTRwa8DH"
 
+
 def confirm_outline_kb():
     """Кнопки для подтверждения структуры"""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="✅ Подтвердить и генерировать", callback_data="seo:confirm_outline"))
     builder.row(InlineKeyboardButton(text="✏️ Редактировать структуру", callback_data="seo:edit_outline"))
-    builder.row(InlineKeyboardButton(text="🔄 Сгенерировать новую структуру", callback_data="seo:regenerate_outline"))
+    builder.row(InlineKeyboardButton(text="🔄 Перегенерировать структуру", callback_data="seo:regenerate_outline"))
     builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel"))
     return builder.as_markup()
 
-async def save_article_to_docx(article: str, seo_title: str = "") -> bytes:
-    """Сохраняет статью в формате DOCX с правильным форматированием"""
+
+async def save_article_to_docx(article: str, outline: str, seo_title: str = "") -> bytes:
+    """
+    Сохраняет статью в формате DOCX.
+    Структура берётся из outline, текст из article.
+    """
     from docx import Document
-    from docx.shared import Pt, RGBColor
+    from docx.shared import Pt
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     import io
     import re
     
     doc = Document()
     
-    # Заголовок H1
+    # Парсим структуру из outline для получения заголовков
+    outline_headers = []
+    for line in outline.split('\n'):
+        line = line.strip()
+        if line.startswith('### '):
+            outline_headers.append(('h3', line[4:]))
+        elif line.startswith('## '):
+            outline_headers.append(('h2', line[3:]))
+        elif line.startswith('# '):
+            outline_headers.append(('h1', line[2:]))
+    
+    # Парсим статью - разбиваем по заголовкам
+    lines = article.split('\n')
+    current_content = []
+    current_header = None
+    current_level = None
+    
+    # Добавляем H1 заголовок (SEO title или первый # заголовок)
     if seo_title:
         title = doc.add_heading(seo_title, 0)
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
-    # Разбираем контент по строкам
-    lines = article.split('\n')
-    i = 0
-    
-    while i < len(lines):
-        line = lines[i].strip()
-        i += 1
+    for line in lines:
+        line_stripped = line.strip()
         
-        if not line:
-            continue
-        
-        # Заголовки H2
-        if line.startswith('## '):
-            heading = doc.add_heading(line[3:], level=2)
+        # Определяем уровень заголовка
+        if line_stripped.startswith('### '):
+            # Сохраняем предыдущий контент
+            if current_header and current_content:
+                _add_content_to_doc(doc, current_content)
+            current_header = line_stripped[4:]
+            current_level = 3
+            current_content = []
+            doc.add_heading(current_header, level=3)
             
-        # Заголовки H3
-        elif line.startswith('### '):
-            heading = doc.add_heading(line[4:], level=3)
+        elif line_stripped.startswith('## '):
+            if current_header and current_content:
+                _add_content_to_doc(doc, current_content)
+            current_header = line_stripped[3:]
+            current_level = 2
+            current_content = []
+            doc.add_heading(current_header, level=2)
             
-        # Заголовок H1 (пропускаем если уже добавили seo_title)
-        elif line.startswith('# '):
+        elif line_stripped.startswith('# '):
+            if current_header and current_content:
+                _add_content_to_doc(doc, current_content)
+            # H1 уже добавлен как seo_title, пропускаем дубликат
             if not seo_title:
-                doc.add_heading(line[2:], level=1)
-            continue
-            
-        # Обычный текст
-        else:
-            clean_line = line
-            
-            # Обрабатываем списки
-            if line.startswith('- ') or line.startswith('* '):
-                clean_line = line[2:].strip()
-                clean_line = re.sub(r'\*\*(.+?)\*\*', r'\1', clean_line)
-                clean_line = re.sub(r'\*(.+?)\*', r'\1', clean_line)
-                clean_line = re.sub(r'__(.+?)__', r'\1', clean_line)
-                
-                para = doc.add_paragraph(clean_line, style='List Bullet')
-                
-            # Нумерованные списки
-            elif re.match(r'^\d+\.\s', line):
-                clean_line = re.sub(r'^\d+\.\s', '', line).strip()
-                clean_line = re.sub(r'\*\*(.+?)\*\*', r'\1', clean_line)
-                clean_line = re.sub(r'\*(.+?)\*', r'\1', clean_line)
-                clean_line = re.sub(r'__(.+?)__', r'\1', clean_line)
-                
-                para = doc.add_paragraph(clean_line, style='List Number')
-                
-            # Обычный параграф
+                current_header = line_stripped[2:]
+                current_level = 1
+                current_content = []
+                doc.add_heading(current_header, level=1)
             else:
-                clean_line = re.sub(r'\*\*(.+?)\*\*', r'\1', clean_line)
-                clean_line = re.sub(r'\*(.+?)\*', r'\1', clean_line)
-                clean_line = re.sub(r'__(.+?)__', r'\1', clean_line)
-                
-                para = doc.add_paragraph(clean_line)
-                para.paragraph_format.space_after = Pt(6)
+                current_header = line_stripped[2:]
+                current_level = 1
+                current_content = []
+        else:
+            # Обычный текст - добавляем к текущему контенту
+            if line_stripped:
+                current_content.append(line_stripped)
+    
+    # Добавляем последний блок контента
+    if current_content:
+        _add_content_to_doc(doc, current_content)
     
     # Сохраняем в байты
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def _add_content_to_doc(doc, content_lines: list):
+    """Добавляет контент в документ"""
+    import re
+    from docx.shared import Pt
+    
+    for line in content_lines:
+        # Пропускаем пустые строки
+        if not line.strip():
+            continue
+        
+        # Очищаем markdown форматирование
+        clean_line = line
+        clean_line = re.sub(r'\*\*(.+?)\*\*', r'\1', clean_line)
+        clean_line = re.sub(r'\*(.+?)\*', r'\1', clean_line)
+        clean_line = re.sub(r'__(.+?)__', r'\1', clean_line)
+        
+        # Обрабатываем списки
+        if line.startswith('- ') or line.startswith('* '):
+            clean_line = clean_line[2:].strip()
+            para = doc.add_paragraph(clean_line, style='List Bullet')
+        elif re.match(r'^\d+\.\s', line):
+            clean_line = re.sub(r'^\d+\.\s', '', clean_line).strip()
+            para = doc.add_paragraph(clean_line, style='List Number')
+        else:
+            para = doc.add_paragraph(clean_line)
+            para.paragraph_format.space_after = Pt(6)
+
 
 async def upload_to_google(content: bytes, filename: str, title: str) -> str:
     """Загружает статью на Google Drive в папку для статей"""
@@ -128,6 +166,7 @@ async def upload_to_google(content: bytes, filename: str, title: str) -> str:
         print(f"Upload error: {e}")
         return ""
 
+
 @router.callback_query(F.data == "menu:seo")
 async def start_seo_flow(callback: CallbackQuery, state: FSMContext):
     """Начало создания SEO-статьи"""
@@ -148,6 +187,7 @@ async def start_seo_flow(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
+
 @router.message(SEOArticleStates.waiting_topic)
 async def process_topic_and_generate_outline(message: Message, state: FSMContext):
     """Получение темы и генерация структуры"""
@@ -162,7 +202,7 @@ async def process_topic_and_generate_outline(message: Message, state: FSMContext
         keywords = [k.strip() for k in seo_data.get("keywords", "").split(",") if k.strip()]
         seo_title = seo_data.get("seo_title", topic)
         
-        # 2. Генерируем структуру
+        # 2. Генерируем структуру (строго в формате #, ##, ###)
         outline = await openai_service.generate_seo_outline(topic, keywords, seo_title)
         
         # Сохраняем данные
@@ -179,7 +219,7 @@ async def process_topic_and_generate_outline(message: Message, state: FSMContext
             f"<b>SEO-заголовок:</b> {seo_title}\n\n"
             f"<b>Ключи:</b> {', '.join(keywords[:5])}\n\n"
             f"<b>Структура:</b>\n<pre>{outline}</pre>\n\n"
-            f"💡 Вы можете отредактировать структуру перед генерацией.",
+            f"💡 Скопируйте структуру для редактирования если нужно изменить.",
             parse_mode="HTML",
             reply_markup=confirm_outline_kb()
         )
@@ -188,6 +228,7 @@ async def process_topic_and_generate_outline(message: Message, state: FSMContext
             f"❌ Ошибка генерации структуры: {e}",
             reply_markup=back_to_menu_kb()
         )
+
 
 @router.callback_query(SEOArticleStates.confirming_outline, F.data == "seo:confirm_outline")
 async def confirm_and_generate_article(callback: CallbackQuery, state: FSMContext):
@@ -198,16 +239,19 @@ async def confirm_and_generate_article(callback: CallbackQuery, state: FSMContex
     await callback.answer()
     
     try:
-        # Генерируем полную статью
-        article = await openai_service.generate_seo_article(
-            topic=data['topic'],
-            keywords=data['keywords'],
+        # Генерируем статью СТРОГО по структуре
+        article = await openai_service.generate_seo_article_by_outline(
             outline=data['outline'],
+            keywords=data['keywords'],
             seo_title=data['seo_title']
         )
         
-        # Сохраняем в DOCX
-        docx_content = await save_article_to_docx(article, data['seo_title'])
+        # Сохраняем в DOCX (структура + текст)
+        docx_content = await save_article_to_docx(
+            article=article,
+            outline=data['outline'],
+            seo_title=data['seo_title']
+        )
         
         # Формируем имя файла
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -255,6 +299,7 @@ async def confirm_and_generate_article(callback: CallbackQuery, state: FSMContex
         )
         await state.clear()
 
+
 @router.callback_query(SEOArticleStates.confirming_outline, F.data == "seo:edit_outline")
 async def edit_outline(callback: CallbackQuery, state: FSMContext):
     """Редактирование структуры"""
@@ -263,19 +308,18 @@ async def edit_outline(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SEOArticleStates.editing_outline)
     await callback.message.edit_text(
         "✏️ <b>Редактирование структуры</b>\n\n"
-        "Отправьте отредактированную структуру.\n"
-        "Используйте:\n"
-        "• <code>## Заголовок</code> для H2\n"
-        "• <code>### Заголовок</code> для H3\n\n"
-        "Пример:\n"
-        "<pre>## Основной раздел\n"
-        "### Подраздел 1\n"
-        "### Подраздел 2\n"
-        "## Следующий раздел</pre>",
+        "Скопируйте структуру выше, отредактируйте и отправьте.\n\n"
+        "<b>Формат заголовков:</b>\n"
+        "• <code># Заголовок H1</code> (главный)\n"
+        "• <code>## Заголовок H2</code> (раздел)\n"
+        "• <code>### Заголовок H3</code> (подраздел)\n\n"
+        f"<b>Текущая структура для копирования:</b>\n"
+        f"<pre>{data['outline']}</pre>",
         parse_mode="HTML",
         reply_markup=cancel_and_back_kb("seo:back_outline")
     )
     await callback.answer()
+
 
 @router.callback_query(SEOArticleStates.editing_outline, F.data == "seo:back_outline")
 async def back_to_outline(callback: CallbackQuery, state: FSMContext):
@@ -293,11 +337,33 @@ async def back_to_outline(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
+
 @router.message(SEOArticleStates.editing_outline)
 async def process_edited_outline(message: Message, state: FSMContext):
     """Обработка отредактированной структуры"""
-    outline = message.text.strip()
-    await state.update_data(outline=outline)
+    new_outline = message.text.strip()
+    
+    # Валидация структуры - должна содержать хотя бы один заголовок
+    has_headers = any(
+        line.strip().startswith('#') 
+        for line in new_outline.split('\n')
+    )
+    
+    if not has_headers:
+        await message.answer(
+            "⚠️ <b>Структура должна содержать заголовки!</b>\n\n"
+            "Используйте формат:\n"
+            "• <code># Заголовок H1</code>\n"
+            "• <code>## Заголовок H2</code>\n"
+            "• <code>### Заголовок H3</code>\n\n"
+            "Попробуйте ещё раз:",
+            parse_mode="HTML",
+            reply_markup=cancel_and_back_kb("seo:back_outline")
+        )
+        return
+    
+    # Сохраняем новую структуру
+    await state.update_data(outline=new_outline)
     await state.set_state(SEOArticleStates.confirming_outline)
     
     data = await state.get_data()
@@ -305,10 +371,12 @@ async def process_edited_outline(message: Message, state: FSMContext):
     await message.answer(
         f"✅ <b>Структура обновлена!</b>\n\n"
         f"<b>SEO-заголовок:</b> {data['seo_title']}\n\n"
-        f"<b>Новая структура:</b>\n<pre>{outline}</pre>",
+        f"<b>Новая структура:</b>\n<pre>{new_outline}</pre>\n\n"
+        f"💡 Статья будет сгенерирована СТРОГО по этой структуре.",
         parse_mode="HTML",
         reply_markup=confirm_outline_kb()
     )
+
 
 @router.callback_query(SEOArticleStates.confirming_outline, F.data == "seo:regenerate_outline")
 async def regenerate_outline(callback: CallbackQuery, state: FSMContext):

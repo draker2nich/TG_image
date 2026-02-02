@@ -227,7 +227,7 @@ class OpenAIService:
             raise ValueError(f"Не удалось распарсить JSON: {result_text}")
     
     async def generate_seo_outline(self, topic: str, keywords: list[str], seo_title: str = None) -> str:
-        """Генерирует структуру SEO-статьи (РУССКИЙ ЯЗЫК)"""
+        """Генерирует структуру SEO-статьи СТРОГО в формате #, ##, ###"""
         if not self.client:
             raise RuntimeError("OpenAI API недоступен")
         
@@ -235,30 +235,68 @@ class OpenAIService:
         
         system = f"""Ты — SEO-специалист и копирайтер.
 
-КОНТЕКСТ (база знаний о продукте/компании):
-{kb_content[:4000] if kb_content else 'База знаний пуста.'}
+    КОНТЕКСТ (база знаний о продукте/компании):
+    {kb_content[:4000] if kb_content else 'База знаний пуста.'}
 
-ЗАДАЧА: Создай структуру SEO-статьи с H2/H3 заголовками.
-- Если тема связана с базой знаний — используй эту информацию
-- Если тема общая — создай качественную структуру, но можешь добавить раздел о продукте/услуге из базы знаний (если уместно)
+    ЗАДАЧА: Создай структуру SEO-статьи.
 
-КРИТИЧНО: Пиши ТОЛЬКО на РУССКОМ языке!"""
+    КРИТИЧЕСКИ ВАЖНО - ФОРМАТ ЗАГОЛОВКОВ:
+    - # Заголовок — это H1 (только ОДИН на всю статью)
+    - ## Заголовок — это H2 (основные разделы)
+    - ### Заголовок — это H3 (подразделы)
+
+    ПРАВИЛА:
+    1. Используй ТОЛЬКО формат с # для заголовков
+    2. НЕ используй цифры, тире или другие маркеры
+    3. Каждый заголовок на ОТДЕЛЬНОЙ строке
+    4. НЕ добавляй описания между заголовками
+    5. Пиши ТОЛЬКО на РУССКОМ языке
+
+    ПРИМЕР:
+    # Как выбрать ноутбук в 2024 году
+    ## Введение
+    ## Типы ноутбуков
+    ### Ультрабуки
+    ### Игровые ноутбуки
+    ## На что обратить внимание
+    ### Процессор
+    ### Оперативная память
+    ## Заключение
+
+    КРИТИЧНО: Выводи ТОЛЬКО структуру заголовков!"""
 
         kw_str = ", ".join(keywords) if keywords else "не указаны"
-        title_str = f"\nSEO-заголовок: {seo_title}" if seo_title else ""
+        title_instruction = f"\nГлавный заголовок H1: # {seo_title}" if seo_title else ""
         
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system},
-                {"role": "user", "content": f"Тема: {topic}\nКлючи: {kw_str}{title_str}\n\nСоздай структуру статьи на РУССКОМ языке."}
+                {"role": "user", "content": f"Тема: {topic}\nКлючи: {kw_str}{title_instruction}\n\nСоздай структуру."}
             ],
             max_tokens=1500
         )
-        return response.choices[0].message.content
+        
+        outline = response.choices[0].message.content.strip()
+        
+        # Убираем markdown блоки кода если есть
+        if outline.startswith("```"):
+            lines = outline.split("\n")
+            outline = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        
+        return outline
     
-    async def generate_seo_article(self, topic: str, keywords: list[str], outline: str, seo_title: str = None) -> str:
-        """Генерирует полную SEO-статью (РУССКИЙ ЯЗЫК)"""
+    
+    async def generate_seo_article_by_outline(
+        self, 
+        outline: str, 
+        keywords: list[str], 
+        seo_title: str = None
+    ) -> str:
+        """
+        Генерирует SEO-статью СТРОГО по предоставленной структуре.
+        Заголовки НЕ изменяются!
+        """
         if not self.client:
             raise RuntimeError("OpenAI API недоступен")
         
@@ -266,29 +304,52 @@ class OpenAIService:
         
         system = f"""Ты — профессиональный SEO-копирайтер.
 
-КОНТЕКСТ (база знаний о продукте/компании):
-{kb_content[:5000] if kb_content else 'База знаний пуста.'}
+    КОНТЕКСТ (база знаний):
+    {kb_content[:5000] if kb_content else 'База знаний пуста.'}
 
-ПРАВИЛА:
-1. Пиши информативную, структурированную статью с учётом SEO
-2. Если тема напрямую связана с базой знаний — используй факты и данные из неё
-3. Если тема общая — пиши качественную статью, но можешь органично упомянуть продукт/услугу из базы знаний
-4. НЕ ВЫДУМЫВАЙ конкретные факты, цифры, исследования — если их нет в базе знаний
-5. Пиши ТОЛЬКО на РУССКОМ языке"""
+    ЗАДАЧА: Написать текст статьи СТРОГО по структуре.
+
+    КРИТИЧЕСКИЕ ПРАВИЛА:
+    1. НЕЛЬЗЯ изменять, добавлять или удалять заголовки
+    2. НЕЛЬЗЯ менять порядок или текст заголовков
+    3. Просто напиши текст ПОД КАЖДЫМ заголовком
+    4. Сохраняй формат: # для H1, ## для H2, ### для H3
+
+    ФОРМАТ:
+    # Заголовок H1
+    Текст введения...
+
+    ## Заголовок H2
+    Текст раздела...
+
+    ### Заголовок H3
+    Текст подраздела...
+
+    СТИЛЬ:
+    - Информативный контент, абзацы по 3-5 предложений
+    - Естественная интеграция ключевых слов
+    - Пиши ТОЛЬКО на РУССКОМ языке
+
+    КРИТИЧНО: Заголовки должны остаться ТОЧНО такими же!"""
 
         kw_str = ", ".join(keywords) if keywords else "не указаны"
-        title_instruction = f"\nИспользуй заголовок H1: {seo_title}" if seo_title else ""
         
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system},
-                {"role": "user", "content": f"Тема: {topic}\nКлючи: {kw_str}{title_instruction}\nСтруктура:\n{outline}\n\nНапиши полную статью на РУССКОМ языке."}
+                {"role": "user", "content": f"СТРУКТУРА (заголовки НЕЛЬЗЯ менять):\n\n{outline}\n\nКлючи: {kw_str}\n\nНапиши статью, сохраняя ВСЕ заголовки БЕЗ ИЗМЕНЕНИЙ."}
             ],
             max_tokens=4000
         )
+        
         return response.choices[0].message.content
-    
+
+    # Оставь старый метод для совместимости
+    async def generate_seo_article(self, topic: str, keywords: list[str], outline: str, seo_title: str = None) -> str:
+        """DEPRECATED: Используйте generate_seo_article_by_outline"""
+        return await self.generate_seo_article_by_outline(outline, keywords, seo_title)
+
     async def enhance_video_prompt(self, user_prompt: str, platforms: list[str] = None) -> str:
         """
         Улучшает промпт для генерации видео на основе базы знаний и конкурентов
@@ -425,3 +486,6 @@ class OpenAIService:
         return json.loads(response.choices[0].message.content)
 
 openai_service = OpenAIService()
+
+
+
