@@ -36,8 +36,8 @@ class AvatarVideoStates(StatesGroup):
 class SEOArticleStates(StatesGroup):
     """Состояния для SEO-статей"""
     waiting_topic = State()
-    confirming_outline = State()  # Новое
-    editing_outline = State()     # Новое
+    confirming_outline = State()
+    editing_outline = State()
 
 
 class ShortVideoStates(StatesGroup):
@@ -69,7 +69,6 @@ class ContentPlanStates(StatesGroup):
     selecting_frequency = State()
     generating = State()
     viewing_plan = State()
-    selecting_idea = State()
 
 
 class CarouselStates(StatesGroup):

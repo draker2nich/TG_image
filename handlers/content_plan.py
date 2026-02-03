@@ -1,9 +1,8 @@
-import io
 import os
 import json
 from datetime import datetime
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
@@ -16,7 +15,6 @@ from services.google_service import google_service
 
 router = Router()
 
-SCRIPTS_FOLDER_ID = "1Pw8ifOD3imF8y7U8LMqFhMtrKO1qkz3p"
 COMPETITORS_FILE = os.path.join("knowledge_base", "competitors.json")
 
 FORMAT_TO_CATEGORY = {
@@ -193,12 +191,14 @@ async def show_content_plan(message, plan, page: int = 0):
     
     builder = InlineKeyboardBuilder()
     nav = []
-    if page > 0: nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"plan:page:{page-1}"))
-    if end < len(ideas): nav.append(InlineKeyboardButton(text="➡️", callback_data=f"plan:page:{page+1}"))
-    if nav: builder.row(*nav)
-    builder.row(InlineKeyboardButton(text="📝 Сценарий для идеи", callback_data="plan:script"))
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"plan:page:{page-1}"))
+    if end < len(ideas):
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"plan:page:{page+1}"))
+    if nav:
+        builder.row(*nav)
     builder.row(InlineKeyboardButton(text="🔄 Перегенерировать план", callback_data="plan:regenerate"))
-    builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main"))
+    builder.row(InlineKeyboardButton(text="🎬 Перегенерировать контент", callback_data="menu:main"))
     await message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
 
 @router.callback_query(ContentPlanStates.viewing_plan, F.data.startswith("plan:page:"))
@@ -206,155 +206,6 @@ async def change_page(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     await show_content_plan(callback.message, data.get("content_plan", {}), int(callback.data.split(":")[2]))
     await callback.answer()
-
-@router.callback_query(ContentPlanStates.viewing_plan, F.data == "plan:script")
-async def select_idea_for_script(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(ContentPlanStates.selecting_idea)
-    await show_ideas_list(callback.message, state)
-    await callback.answer()
-
-async def show_ideas_list(message, state: FSMContext):
-    data = await state.get_data()
-    ideas = data.get("content_plan", {}).get("ideas", [])
-    builder = InlineKeyboardBuilder()
-    for i, idea in enumerate(ideas[:15]):
-        mark = "✅ " if idea.get("generated_script") else ""
-        builder.row(InlineKeyboardButton(text=f"{mark}{i+1}. {idea.get('title', '')[:30]}", callback_data=f"plan:gen_script:{i}"))
-    builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main"))
-    await message.edit_text("📝 <b>Выберите идею:</b>\n✅ — сценарий сгенерирован", parse_mode="HTML", reply_markup=builder.as_markup())
-
-@router.callback_query(ContentPlanStates.selecting_idea, F.data == "plan:back_to_plan")
-async def back_to_plan_from_ideas(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    await state.set_state(ContentPlanStates.viewing_plan)
-    await show_content_plan(callback.message, data.get("content_plan", {}), 0)
-    await callback.answer()
-
-@router.callback_query(ContentPlanStates.selecting_idea, F.data.startswith("plan:gen_script:"))
-async def generate_script_for_idea(callback: CallbackQuery, state: FSMContext):
-    idx = int(callback.data.split(":")[2])
-    data = await state.get_data()
-    ideas = data.get("content_plan", {}).get("ideas", [])
-    if idx >= len(ideas):
-        await callback.answer("Идея не найдена", show_alert=True)
-        return
-    idea = ContentIdea(**ideas[idx])
-    await state.update_data(current_idea_idx=idx)
-    await callback.message.edit_text(f"⏳ Генерирую сценарий:\n<b>{idea.title}</b>", parse_mode="HTML")
-    try:
-        script = await content_plan_service.generate_script_from_idea(idea)
-        await state.update_data(current_script=script, current_idea_title=idea.title)
-        await show_script_preview(callback.message, script, idea.title, state)
-    except Exception as e:
-        builder = InlineKeyboardBuilder()
-        builder.row(InlineKeyboardButton(text="⬅️ Назад к идеям", callback_data="plan:back_to_ideas"))
-        await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=builder.as_markup())
-    await callback.answer()
-
-async def show_script_preview(message, script: str, title: str, state: FSMContext):
-    await state.set_state(ContentPlanStates.confirming_script)
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="✅ Подтвердить и сохранить", callback_data="plan:confirm_script"))
-    builder.row(InlineKeyboardButton(text="🔄 Перегенерировать", callback_data="plan:regen_script"))
-    builder.row(InlineKeyboardButton(text="⬅️ Назад к идеям", callback_data="plan:back_to_ideas"))
-    builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main"))
-    text = f"📝 <b>Сценарий: {title}</b>\n\n{script[:3500]}{'...' if len(script) > 3500 else ''}"
-    await message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
-
-@router.callback_query(ContentPlanStates.confirming_script, F.data == "plan:confirm_script")
-async def confirm_and_save_script(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    script, title, idx = data.get("current_script", ""), data.get("current_idea_title", ""), data.get("current_idea_idx", 0)
-    plan, ideas = data.get("content_plan", {}), data.get("content_plan", {}).get("ideas", [])
-    if not script:
-        await callback.answer("Сценарий не найден", show_alert=True)
-        return
-    await callback.message.edit_text("⏳ Сохраняю на Google Drive...")
-    try:
-        google_url = await upload_script_to_google(script, title)
-        if idx < len(ideas):
-            ideas[idx]["generated_script"] = script
-            plan["ideas"] = ideas
-            await state.update_data(content_plan=plan)
-        await google_service.update_content_status(title, "Сгенерировано")
-        builder = InlineKeyboardBuilder()
-        builder.row(InlineKeyboardButton(text="⬅️ Назад к идеям", callback_data="plan:back_to_ideas"))
-        builder.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main"))
-        text = f"✅ <b>Сценарий сохранён!</b>\n\n📝 {title}"
-        if google_url: text += f"\n\n☁️ <a href='{google_url}'>Открыть на Google Drive</a>"
-        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
-    except Exception as e:
-        builder = InlineKeyboardBuilder()
-        builder.row(InlineKeyboardButton(text="🔄 Попробовать снова", callback_data="plan:confirm_script"))
-        builder.row(InlineKeyboardButton(text="⬅️ Назад к идеям", callback_data="plan:back_to_ideas"))
-        await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=builder.as_markup())
-    await callback.answer()
-
-@router.callback_query(ContentPlanStates.confirming_script, F.data == "plan:regen_script")
-async def regenerate_script(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    idx, ideas = data.get("current_idea_idx", 0), data.get("content_plan", {}).get("ideas", [])
-    if idx >= len(ideas):
-        await callback.answer("Идея не найдена", show_alert=True)
-        return
-    idea = ContentIdea(**ideas[idx])
-    await callback.message.edit_text(f"⏳ Перегенерирую сценарий:\n<b>{idea.title}</b>", parse_mode="HTML")
-    try:
-        script = await content_plan_service.generate_script_from_idea(idea)
-        await state.update_data(current_script=script)
-        await show_script_preview(callback.message, script, idea.title, state)
-    except Exception as e:
-        builder = InlineKeyboardBuilder()
-        builder.row(InlineKeyboardButton(text="🔄 Попробовать снова", callback_data="plan:regen_script"))
-        builder.row(InlineKeyboardButton(text="⬅️ Назад к идеям", callback_data="plan:back_to_ideas"))
-        await callback.message.edit_text(f"❌ Ошибка: {e}", reply_markup=builder.as_markup())
-    await callback.answer()
-
-@router.callback_query(ContentPlanStates.confirming_script, F.data == "plan:back_to_ideas")
-async def back_to_ideas_from_script(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(ContentPlanStates.selecting_idea)
-    await show_ideas_list(callback.message, state)
-    await callback.answer()
-
-@router.callback_query(ContentPlanStates.confirming_script, F.data == "plan:back_to_plan")
-async def back_to_plan_from_script(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    await state.set_state(ContentPlanStates.viewing_plan)
-    await show_content_plan(callback.message, data.get("content_plan", {}), 0)
-    await callback.answer()
-
-@router.callback_query(F.data == "plan:back_to_ideas")
-async def back_to_ideas_universal(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(ContentPlanStates.selecting_idea)
-    await show_ideas_list(callback.message, state)
-    await callback.answer()
-
-@router.callback_query(F.data == "plan:back_to_plan")
-async def back_to_plan_universal(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    plan = data.get("content_plan", {})
-    if not plan:
-        await callback.message.edit_text("⚠️ План не найден.", reply_markup=back_to_menu_kb())
-        await callback.answer()
-        return
-    await state.set_state(ContentPlanStates.viewing_plan)
-    await show_content_plan(callback.message, plan, 0)
-    await callback.answer()
-
-async def upload_script_to_google(script: str, title: str) -> str:
-    try:
-        if not await google_service.initialize(): return ""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_title = "".join(c if c.isalnum() or c in " -_" else "" for c in title)[:30]
-        filename = f"Script_{safe_title.replace(' ', '_')}_{timestamp}.txt"
-        result = await google_service.upload_file_to_drive(
-            file_content=script.encode('utf-8'), file_name=filename,
-            mime_type="text/plain", folder_id=SCRIPTS_FOLDER_ID
-        )
-        return result.file_url or "" if result.success else ""
-    except Exception as e:
-        print(f"Upload error: {e}")
-        return ""
 
 @router.callback_query(ContentPlanStates.viewing_plan, F.data == "plan:regenerate")
 async def regenerate_plan(callback: CallbackQuery, state: FSMContext):
