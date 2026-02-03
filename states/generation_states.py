@@ -69,6 +69,7 @@ class ContentPlanStates(StatesGroup):
     selecting_frequency = State()
     generating = State()
     viewing_plan = State()
+    view_only = State()  # Режим только просмотра (после перехода в меню)
 
 
 class CarouselStates(StatesGroup):
